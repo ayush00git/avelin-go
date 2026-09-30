@@ -18,6 +18,13 @@ func New(dir fs.FS, streamDelay time.Duration) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/chat/completions", s.auth(s.chat))
 	mux.HandleFunc("POST /v1/messages", s.auth(s.messages))
+	mux.HandleFunc("GET /v1/models", s.auth(func(w http.ResponseWriter, r *http.Request) {
+		s.file(w, "models_list.json")
+	}))
+	mux.HandleFunc("POST /v1/embeddings", s.auth(s.embeddings))
+	mux.HandleFunc("GET /public/models.json", func(w http.ResponseWriter, r *http.Request) {
+		s.file(w, "public_models.json")
+	})
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, `{"detail": "Not Found"}`)
 	})
@@ -81,6 +88,21 @@ func (s *server) messages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.file(w, "message.json")
+}
+
+func (s *server) embeddings(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Model string          `json:"model"`
+		Input json.RawMessage `json:"input"`
+	}
+	if !decode(w, r, &req) {
+		return
+	}
+	if req.Model == "" || len(req.Input) == 0 {
+		badRequest(w, "model and input are required")
+		return
+	}
+	s.file(w, "embeddings.json")
 }
 
 func (s *server) file(w http.ResponseWriter, name string) {

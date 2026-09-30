@@ -15,7 +15,7 @@ import (
 func main() {
 	client := avelin.NewClient()
 	resp, err := client.CreateChatCompletion(context.Background(), avelin.ChatCompletionRequest{
-		Model: "avelin-pro",
+		Model: avelin.ModelPro,
 		Messages: []avelin.ChatMessage{
 			{Role: "system", Content: "You are a helpful assistant."},
 			{Role: "user", Content: "Give me three productivity tips."},

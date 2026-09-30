@@ -16,7 +16,7 @@ import (
 func main() {
 	client := avelin.NewClient()
 	stream, err := client.CreateChatCompletionStream(context.Background(), avelin.ChatCompletionRequest{
-		Model:    "avelin-pro",
+		Model:    avelin.ModelPro,
 		Messages: []avelin.ChatMessage{{Role: "user", Content: "Write a haiku about sovereignty."}},
 	})
 	if err != nil {
