@@ -1,14 +1,21 @@
 package avelin
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"reflect"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/ayush00git/avelin-go/internal/mockapi"
 )
 
 // newTestClient returns a client for srv with a test key and fast backoff.
@@ -16,6 +23,63 @@ func newTestClient(srv *httptest.Server, opts ...Option) *Client {
 	c := NewClient(append([]Option{WithAPIKey("sk-avelin-test"), WithBaseURL(srv.URL)}, opts...)...)
 	c.retryDelay = time.Millisecond
 	return c
+}
+
+// recorder captures the last request a test server received.
+type recorder struct {
+	mu     sync.Mutex
+	header http.Header
+	body   []byte
+}
+
+func (rec *recorder) wrap(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		rec.mu.Lock()
+		rec.header, rec.body = r.Header.Clone(), body
+		rec.mu.Unlock()
+		r.Body = io.NopCloser(bytes.NewReader(body))
+		next.ServeHTTP(w, r)
+	})
+}
+
+func (rec *recorder) last() (http.Header, []byte) {
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+	return rec.header, rec.body
+}
+
+// mockServer serves testdata through internal/mockapi and records requests.
+func mockServer(t *testing.T) (*httptest.Server, *recorder) {
+	t.Helper()
+	rec := &recorder{}
+	srv := httptest.NewServer(rec.wrap(mockapi.New(os.DirFS("testdata"), 0)))
+	t.Cleanup(srv.Close)
+	return srv, rec
+}
+
+func fixture(t *testing.T, name string) []byte {
+	t.Helper()
+	data, err := os.ReadFile("testdata/" + name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data
+}
+
+// assertJSON fails unless got and want are equal JSON values.
+func assertJSON(t *testing.T, got []byte, want string) {
+	t.Helper()
+	var g, w any
+	if err := json.Unmarshal(got, &g); err != nil {
+		t.Fatalf("invalid JSON %s: %v", got, err)
+	}
+	if err := json.Unmarshal([]byte(want), &w); err != nil {
+		t.Fatalf("invalid want JSON: %v", err)
+	}
+	if !reflect.DeepEqual(g, w) {
+		t.Fatalf("JSON mismatch\n got: %s\nwant: %s", got, want)
+	}
 }
 
 // sequence serves the given handlers in order, repeating the last one, and
@@ -39,6 +103,13 @@ func status(code int, body string, header ...string) http.HandlerFunc {
 }
 
 var okBody = status(200, `{"ok":true}`)
+
+// waitForClient blocks until the client disconnects. The server notices a
+// disconnect only after the request body has been read, so it drains it.
+func waitForClient(w http.ResponseWriter, r *http.Request) {
+	io.Copy(io.Discard, r.Body)
+	<-r.Context().Done()
+}
 
 func get(ctx context.Context, c *Client) error {
 	var out map[string]any
@@ -65,15 +136,13 @@ func TestNewClientConfig(t *testing.T) {
 }
 
 func TestRequestHeaders(t *testing.T) {
-	var got http.Header
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		got = r.Header.Clone()
-		okBody(w, r)
-	}))
+	rec := &recorder{}
+	srv := httptest.NewServer(rec.wrap(okBody))
 	defer srv.Close()
 	if err := get(context.Background(), newTestClient(srv)); err != nil {
 		t.Fatal(err)
 	}
+	got, _ := rec.last()
 	if got.Get("Authorization") != "Bearer sk-avelin-test" {
 		t.Errorf("Authorization = %q", got.Get("Authorization"))
 	}
@@ -198,9 +267,7 @@ func TestRetryLimits(t *testing.T) {
 }
 
 func TestContextCancelDuringRequest(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		<-r.Context().Done()
-	}))
+	srv := httptest.NewServer(http.HandlerFunc(waitForClient))
 	defer srv.Close()
 	ctx, cancel := context.WithCancel(context.Background())
 	time.AfterFunc(50*time.Millisecond, cancel)
@@ -226,9 +293,7 @@ func TestContextCancelDuringBackoff(t *testing.T) {
 }
 
 func TestTimeout(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		<-r.Context().Done()
-	}))
+	srv := httptest.NewServer(http.HandlerFunc(waitForClient))
 	defer srv.Close()
 	err := get(context.Background(), newTestClient(srv, WithTimeout(50*time.Millisecond)))
 	if !errors.Is(err, context.DeadlineExceeded) {
