@@ -1,5 +1,5 @@
-// Command stream streams a chat completion, printing reasoning to stderr and
-// the answer to stdout as they arrive.
+// Command stream streams a chat completion and prints the answer as it
+// arrives.
 //
 // It reads AVELIN_API_KEY, and AVELIN_BASE_URL if set.
 package main
@@ -8,7 +8,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"os"
 
 	"github.com/ayush00git/avelin-go"
 )
@@ -25,8 +24,7 @@ func main() {
 	defer stream.Close()
 	for stream.Next() {
 		for _, choice := range stream.Current().Choices {
-			fmt.Fprint(os.Stderr, choice.Delta.ReasoningContent)
-			fmt.Print(choice.Delta.Content)
+			fmt.Print(choice.Delta.Content) // Delta.ReasoningContent holds the reasoning.
 		}
 	}
 	fmt.Println()
