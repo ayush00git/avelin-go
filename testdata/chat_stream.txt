@@ -1,0 +1,10 @@
+data: {"id":"chatcmpl-...","object":"chat.completion.chunk","created":1704067200,"model":"avelin-pro","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-...","object":"chat.completion.chunk","created":1704067200,"model":"avelin-pro","choices":[{"index":0,"delta":{"reasoning_content":"The user"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-...","object":"chat.completion.chunk","created":1704067200,"model":"avelin-pro","choices":[{"index":0,"delta":{"content":"Vendor-neutral"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-...","object":"chat.completion.chunk","created":1704067200,"model":"avelin-pro","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
+
+data: [DONE]
+
