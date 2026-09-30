@@ -17,8 +17,8 @@ type EmbeddingRequest struct {
 	Input []string `json:"input"`
 }
 
-// EmbeddingResponse is the response of CreateEmbeddings.
-type EmbeddingResponse struct {
+// EmbeddingList is the response of CreateEmbeddings.
+type EmbeddingList struct {
 	Object string      `json:"object"`
 	Data   []Embedding `json:"data"`
 	Model  string      `json:"model"`
@@ -38,8 +38,8 @@ type Embedding struct {
 }
 
 // CreateEmbeddings embeds the input texts.
-func (c *Client) CreateEmbeddings(ctx context.Context, req EmbeddingRequest) (*EmbeddingResponse, error) {
-	var out EmbeddingResponse
+func (c *Client) CreateEmbeddings(ctx context.Context, req EmbeddingRequest) (*EmbeddingList, error) {
+	var out EmbeddingList
 	var err error
 	out.Meta, out.Raw, err = c.do(ctx, request{method: http.MethodPost, path: "/v1/embeddings", body: req}, &out)
 	if err != nil {

@@ -41,7 +41,8 @@ type Thinking struct {
 }
 
 // MessageParam is an input message. Set Content for plain text, or Blocks
-// for content blocks such as tool results. Blocks wins if both are set.
+// for content blocks such as tool results. A non-nil Blocks is sent instead of
+// Content.
 type MessageParam struct {
 	// Role is "user" or "assistant".
 	Role    string
@@ -61,6 +62,27 @@ func (m MessageParam) MarshalJSON() ([]byte, error) {
 		Role    string `json:"role"`
 		Content string `json:"content"`
 	}{m.Role, m.Content})
+}
+
+// UnmarshalJSON accepts content as a string or an array of blocks, so saved
+// conversations can be read back.
+func (m *MessageParam) UnmarshalJSON(data []byte) error {
+	var raw struct {
+		Role    string          `json:"role"`
+		Content json.RawMessage `json:"content"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	*m = MessageParam{Role: raw.Role}
+	switch {
+	case len(raw.Content) == 0 || string(raw.Content) == "null":
+		return nil
+	case raw.Content[0] == '[':
+		return json.Unmarshal(raw.Content, &m.Blocks)
+	default:
+		return json.Unmarshal(raw.Content, &m.Content)
+	}
 }
 
 // ContentBlock is one block of message content. Type selects the fields

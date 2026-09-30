@@ -26,7 +26,7 @@ NewClient(opts ...Option) *Client  // key: AVELIN_API_KEY; base URL: AVELIN_BASE
 WithAPIKey WithBaseURL WithHTTPClient WithMaxRetries WithTimeout
 CreateChatCompletion / CreateChatCompletionStream -> *ChatCompletion / *Stream[ChatCompletionChunk]
 CreateMessage / CreateMessageStream               -> *Message / *Stream[MessageStreamEvent]
-ListModels -> *ModelList   CreateEmbeddings -> *EmbeddingResponse   FetchCatalog -> *Catalog (no key)
+ListModels -> *ModelList   CreateEmbeddings -> *EmbeddingList   FetchCatalog -> *Catalog (no key)
 Stream[T]: Next, Current, Err, Close, Meta     APIError{StatusCode, Type, Code, Message, RequestID, Header, Body}
 Results: Meta{StatusCode, Header} + Raw (full JSON).  Helpers: Ptr, Message.Text, ModelBGEM3
 ```
@@ -52,8 +52,10 @@ Results: Meta{StatusCode, Header} + Raw (full JSON).  Helpers: Ptr, Message.Text
   after a stream starts; Retry-After above 60s is returned as an error instead of waited on.
 - `WithTimeout` (default 10 min) covers a whole non-streaming attempt, but only the header wait for streams.
 - `avelin-models` family column is derived from the ID; `avelin-<tier>` is "intelligence" per the docs.
-- SSE: events without a terminating blank line are dropped at EOF (spec); a stream without its
-  terminator reports `io.ErrUnexpectedEOF`.
+- SSE: a leading BOM is stripped and an event without a terminating blank line is dropped at EOF
+  (spec); events with empty data are skipped; a stream without its terminator reports
+  `io.ErrUnexpectedEOF`.
+- A chat chunk with `"error": null` is a normal chunk.
 
 ## Claims checked
 - "Ultra models don't support reasoning_effort": not found; docs and models.json say they do.
@@ -65,6 +67,9 @@ Results: Meta{StatusCode, Header} + Raw (full JSON).  Helpers: Ptr, Message.Text
 - `-tags integration` (skips without AVELIN_API_KEY), `-tags live` (public catalog only).
 - genmodels test keeps `models_gen.go` in sync with the catalog snapshot.
 - Dev machine had no C compiler; `-race` ran with `CC="zig cc"`. staticcheck 2026.2.1 clean.
+- Phase 7 review fixed: `"error": null` chunks ending streams, unbounded error-body reads on
+  streams, `Retry-After` overflow, empty data events, BOM and bare-CR handling, and
+  `MessageParam` JSON round trips; each has a regression test.
 
 ## Phases
 0 research + plan, 1 skeleton, 2 chat, 3 messages, 4 models/embeddings/catalog/codegen,

@@ -173,7 +173,7 @@ func decodeChatEvent(meta Meta, ev sseEvent) (*ChatCompletionChunk, bool, error)
 	if err := json.Unmarshal([]byte(ev.data), &chunk); err != nil {
 		return nil, false, fmt.Errorf("avelin: decode stream chunk: %w", err)
 	}
-	if chunk.Error != nil {
+	if len(chunk.Error) > 0 && string(chunk.Error) != "null" {
 		return nil, false, parseAPIError(meta.StatusCode, meta.Header, []byte(ev.data))
 	}
 	chunk.Raw = json.RawMessage(ev.data)

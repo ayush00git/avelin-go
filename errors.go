@@ -29,6 +29,7 @@ type APIError struct {
 	Body []byte
 }
 
+// Error formats the status, type, message and request ID.
 func (e *APIError) Error() string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "avelin: HTTP %d", e.StatusCode)
@@ -53,8 +54,8 @@ func newAPIError(resp *http.Response) *APIError {
 
 // parseAPIError understands the documented OpenAI-style body
 // {"error":{"message","type","code"}}, the Anthropic body
-// {"type":"error","error":{"type","message"}} and the {"detail": ...} body
-// the server returns for unknown routes.
+// {"type":"error","error":{"type","message"}}, the {"detail": ...} body the
+// server returns for unknown routes, and a bare {"message": ...}.
 func parseAPIError(status int, header http.Header, body []byte) *APIError {
 	e := &APIError{StatusCode: status, Header: header, RequestID: requestID(header), Body: body}
 	var parsed struct {
@@ -63,7 +64,8 @@ func parseAPIError(status int, header http.Header, body []byte) *APIError {
 			Type    string          `json:"type"`
 			Code    json.RawMessage `json:"code"`
 		} `json:"error"`
-		Detail json.RawMessage `json:"detail"`
+		Message string          `json:"message"`
+		Detail  json.RawMessage `json:"detail"`
 	}
 	switch err := json.Unmarshal(body, &parsed); {
 	case err == nil && parsed.Error != nil:
@@ -72,10 +74,12 @@ func parseAPIError(status int, header http.Header, body []byte) *APIError {
 		e.Code = rawText(parsed.Error.Code)
 	case err == nil && parsed.Detail != nil:
 		e.Message = rawText(parsed.Detail)
-	case err != nil:
+	case err == nil:
+		e.Message = parsed.Message
+	default:
 		e.Message = strings.TrimSpace(string(body))
 		if len(e.Message) > 200 {
-			e.Message = e.Message[:200] + "..."
+			e.Message = strings.ToValidUTF8(e.Message[:200], "") + "..."
 		}
 	}
 	if e.Message == "" {

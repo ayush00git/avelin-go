@@ -16,12 +16,12 @@ import (
 func New(dir fs.FS, streamDelay time.Duration) http.Handler {
 	s := &server{dir: dir, delay: streamDelay}
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /v1/chat/completions", s.auth(s.chat))
-	mux.HandleFunc("POST /v1/messages", s.auth(s.messages))
-	mux.HandleFunc("GET /v1/models", s.auth(func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /v1/chat/completions", requireAuth(s.chat))
+	mux.HandleFunc("POST /v1/messages", requireAuth(s.messages))
+	mux.HandleFunc("GET /v1/models", requireAuth(func(w http.ResponseWriter, r *http.Request) {
 		s.file(w, "models_list.json")
 	}))
-	mux.HandleFunc("POST /v1/embeddings", s.auth(s.embeddings))
+	mux.HandleFunc("POST /v1/embeddings", requireAuth(s.embeddings))
 	mux.HandleFunc("GET /public/models.json", func(w http.ResponseWriter, r *http.Request) {
 		s.file(w, "public_models.json")
 	})
@@ -36,9 +36,9 @@ type server struct {
 	delay time.Duration
 }
 
-// auth rejects requests without a bearer token, with the body the real API
-// was observed to return.
-func (s *server) auth(next http.HandlerFunc) http.HandlerFunc {
+// requireAuth rejects requests without a bearer token, with the body the
+// real API was observed to return.
+func requireAuth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		token, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
 		if !ok || strings.TrimSpace(token) == "" {
@@ -124,9 +124,12 @@ func (s *server) stream(w http.ResponseWriter, name string) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	flusher, _ := w.(http.Flusher)
-	for _, event := range strings.SplitAfter(string(data), "\n\n") {
+	for i, event := range strings.SplitAfter(string(data), "\n\n") {
 		if strings.TrimSpace(event) == "" {
 			continue
+		}
+		if i > 0 {
+			time.Sleep(s.delay)
 		}
 		if _, err := w.Write([]byte(event)); err != nil {
 			return
@@ -134,7 +137,6 @@ func (s *server) stream(w http.ResponseWriter, name string) {
 		if flusher != nil {
 			flusher.Flush()
 		}
-		time.Sleep(s.delay)
 	}
 }
 
