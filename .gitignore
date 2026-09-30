@@ -1,0 +1,4 @@
+/avelin-models
+/mockserver
+*.test
+*.out
