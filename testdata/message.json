@@ -1,0 +1,15 @@
+{
+  "id": "msg_abc123",
+  "type": "message",
+  "role": "assistant",
+  "model": "avelin-coding-fast",
+  "content": [
+    {"type": "text", "text": "Here is a debounce helper..."}
+  ],
+  "stop_reason": "end_turn",
+  "usage": {
+    "input_tokens": 18,
+    "output_tokens": 210,
+    "total_tokens": 228
+  }
+}

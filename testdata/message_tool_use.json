@@ -1,0 +1,14 @@
+{
+  "id": "msg_...",
+  "type": "message",
+  "role": "assistant",
+  "content": [
+    {
+      "type": "tool_use",
+      "id": "toolu_abc123",
+      "name": "get_weather",
+      "input": {"city": "Abu Dhabi"}
+    }
+  ],
+  "stop_reason": "tool_use"
+}
