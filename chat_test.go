@@ -179,6 +179,10 @@ func TestChatStreamEndings(t *testing.T) {
 	}{
 		{"multi-line data", "data: {\"id\":\"c\",\ndata: \"choices\":[{\"delta\":{\"content\":\"Hi\"}}]}\n\ndata: [DONE]\n\n", 1,
 			func(err error) bool { return err == nil }},
+		{"explicit null error", "data: {\"choices\":[{\"delta\":{\"content\":\"Hi\"}}],\"error\":null}\n\ndata: [DONE]\n\n", 1,
+			func(err error) bool { return err == nil }},
+		{"empty data keep-alive", "data:\n\ndata: " + chunk + "\n\ndata: [DONE]\n\n", 1,
+			func(err error) bool { return err == nil }},
 		{"no [DONE]", "data: " + chunk + "\n\n", 1,
 			func(err error) bool { return errors.Is(err, io.ErrUnexpectedEOF) }},
 		{"broken mid-event", "data: " + chunk + "\n\ndata: {\"id\":\"c\",\"cho", 1,
@@ -305,6 +309,19 @@ func TestChatStreamTimeout(t *testing.T) {
 	_, err = newTestClient(hang, WithTimeout(50*time.Millisecond)).CreateChatCompletionStream(context.Background(), ChatCompletionRequest{Model: "m", Messages: userMessage("hi")})
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("err = %v, want context.DeadlineExceeded", err)
+	}
+
+	// An error response whose body stalls is still bounded by the timeout.
+	stalledError := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+		w.(http.Flusher).Flush()
+		waitForClient(w, r)
+	}))
+	defer stalledError.Close()
+	start := time.Now()
+	_, err = newTestClient(stalledError, WithTimeout(50*time.Millisecond), WithMaxRetries(0)).CreateChatCompletionStream(context.Background(), ChatCompletionRequest{Model: "m", Messages: userMessage("hi")})
+	if err == nil || time.Since(start) > 2*time.Second {
+		t.Fatalf("err = %v after %s, want a prompt error", err, time.Since(start))
 	}
 }
 

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 	"testing/iotest"
+	"time"
 )
 
 func readAllEvents(t *testing.T, r io.Reader) ([]sseEvent, error) {
@@ -74,5 +75,33 @@ func TestSSEReaderReadError(t *testing.T) {
 	got, err := readAllEvents(t, r)
 	if !errors.Is(err, boom) || len(got) != 1 {
 		t.Fatalf("got %d events, err %v", len(got), err)
+	}
+}
+
+func TestSSEReaderBOM(t *testing.T) {
+	got, err := readAllEvents(t, strings.NewReader("\uFEFFdata: x\n\n"))
+	if err != io.EOF || !reflect.DeepEqual(got, []sseEvent{{data: "x"}}) {
+		t.Fatalf("got %q, err %v", got, err)
+	}
+}
+
+// TestSSEReaderCRDispatchesAtOnce checks that an event ending in CR CR is
+// delivered without waiting for more input.
+func TestSSEReaderCRDispatchesAtOnce(t *testing.T) {
+	pr, pw := io.Pipe()
+	defer pw.Close()
+	go pw.Write([]byte("data: a\r\r"))
+	got := make(chan sseEvent, 1)
+	go func() {
+		ev, _ := newSSEReader(pr).next()
+		got <- ev
+	}()
+	select {
+	case ev := <-got:
+		if ev.data != "a" {
+			t.Fatalf("event = %q", ev)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("event was not dispatched until more input arrived")
 	}
 }

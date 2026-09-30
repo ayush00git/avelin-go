@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"reflect"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -176,6 +177,7 @@ func TestAPIErrorShapes(t *testing.T) {
 		{"string code", `{"error":{"message":"m","type":"t","code":"model_not_found"}}`, 404, "t", "model_not_found", "m"},
 		{"anthropic", `{"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}`, 400, "overloaded_error", "", "Overloaded"},
 		{"detail", `{"detail": "Not Found"}`, 404, "", "", "Not Found"},
+		{"bare message", `{"message":"quota exceeded"}`, 402, "", "", "quota exceeded"},
 		{"html", `<html>Bad Gateway</html>`, 400, "", "", "<html>Bad Gateway</html>"},
 		{"empty", ``, 403, "", "", "Forbidden"},
 	}
@@ -248,6 +250,7 @@ func TestRetryLimits(t *testing.T) {
 		{"disabled", status(503, ""), []Option{WithMaxRetries(0)}, 1, 503},
 		{"4xx not retried", status(400, `{"error":{"message":"bad"}}`), nil, 1, 400},
 		{"retry-after too long", status(429, "", "Retry-After", "120"), nil, 1, 429},
+		{"retry-after overflow", status(429, "", "Retry-After", "99999999999"), nil, 1, 429},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -296,8 +299,8 @@ func TestTimeout(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(waitForClient))
 	defer srv.Close()
 	err := get(context.Background(), newTestClient(srv, WithTimeout(50*time.Millisecond)))
-	if !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("err = %v, want context.DeadlineExceeded", err)
+	if !errors.Is(err, context.DeadlineExceeded) || !strings.HasPrefix(err.Error(), "avelin: request timed out") {
+		t.Fatalf("err = %v, want a context.DeadlineExceeded timeout", err)
 	}
 }
 
@@ -328,6 +331,8 @@ func TestParseRetryAfter(t *testing.T) {
 		{"Thu, 01 Jan 2026 00:00:05 GMT", 5 * time.Second, true},
 		{"Wed, 31 Dec 2025 23:59:00 GMT", 0, true},
 		{"soon", 0, false},
+		{"-5", 0, false},
+		{"99999999999", 1 << 30 * time.Second, true},
 	}
 	for _, tt := range tests {
 		got, ok := parseRetryAfter(tt.in, now)

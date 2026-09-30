@@ -26,7 +26,8 @@ var errStreamTruncated = fmt.Errorf("avelin: stream ended before completion: %w"
 //
 // A stream that ends without its terminating event ([DONE] for chat,
 // message_stop for messages) reports an error wrapping io.ErrUnexpectedEOF.
-// Streams are never retried once the response has started.
+// Events with empty data, such as keep-alives, are skipped. Streams are never
+// retried once the response has started.
 type Stream[T any] struct {
 	body   io.ReadCloser
 	events *sseReader
@@ -60,7 +61,7 @@ func (s *Stream[T]) Next() bool {
 			err = fmt.Errorf("avelin: read stream: %w", err)
 		}
 		var v *T
-		if err == nil {
+		if err == nil && ev.data != "" {
 			v, s.done, err = s.decode(s.meta, ev)
 		}
 		if err != nil {
@@ -112,17 +113,19 @@ type sseEvent struct {
 }
 
 // sseReader parses text/event-stream as specified by the WHATWG HTML
-// standard: comments, multi-line data fields and CR, LF or CRLF line endings.
-// The id and retry fields are ignored.
+// standard: a leading BOM, comments, multi-line data fields and CR, LF or
+// CRLF line endings. The id and retry fields are ignored.
 type sseReader struct {
 	scanner *bufio.Scanner
+	started bool // the first line has been read
+	afterCR bool // the last line ended in CR, so a leading LF belongs to it
 }
 
 func newSSEReader(r io.Reader) *sseReader {
-	s := bufio.NewScanner(r)
-	s.Buffer(make([]byte, 0, 64<<10), maxSSELine)
-	s.Split(scanSSELines)
-	return &sseReader{scanner: s}
+	sr := &sseReader{scanner: bufio.NewScanner(r)}
+	sr.scanner.Buffer(make([]byte, 0, 64<<10), maxSSELine)
+	sr.scanner.Split(sr.splitLines)
+	return sr
 }
 
 // next returns the next event that has data. At the end of the input it
@@ -132,6 +135,10 @@ func (r *sseReader) next() (sseEvent, error) {
 	var data strings.Builder
 	for r.scanner.Scan() {
 		line := r.scanner.Text()
+		if !r.started {
+			r.started = true
+			line = strings.TrimPrefix(line, "\uFEFF")
+		}
 		if line == "" {
 			if data.Len() > 0 {
 				return sseEvent{event: event, data: strings.TrimSuffix(data.String(), "\n")}, nil
@@ -158,27 +165,25 @@ func (r *sseReader) next() (sseEvent, error) {
 	return sseEvent{}, io.EOF
 }
 
-// scanSSELines is a bufio.SplitFunc for lines ending in CRLF, LF or CR.
-func scanSSELines(data []byte, atEOF bool) (int, []byte, error) {
-	if atEOF && len(data) == 0 {
-		return 0, nil, nil
+// splitLines is a bufio.SplitFunc for lines ending in CRLF, LF or CR. A line
+// ending in CR is returned at once; an LF that follows is then skipped.
+func (r *sseReader) splitLines(data []byte, atEOF bool) (int, []byte, error) {
+	if r.afterCR && len(data) > 0 && data[0] == '\n' {
+		r.afterCR = false
+		return 1, nil, nil
 	}
 	i := bytes.IndexAny(data, "\r\n")
-	switch {
-	case i < 0 && atEOF:
-		return len(data), data, nil
-	case i < 0:
-		return 0, nil, nil
-	case data[i] == '\n':
-		return i + 1, data[:i], nil
-	case i+1 < len(data):
-		if data[i+1] == '\n' {
-			return i + 2, data[:i], nil
+	if i < 0 {
+		if atEOF && len(data) > 0 {
+			r.afterCR = false
+			return len(data), data, nil
 		}
-		return i + 1, data[:i], nil
-	case atEOF:
-		return i + 1, data[:i], nil
-	default:
-		return 0, nil, nil // lone CR at the end of the buffer: need the next byte
+		return 0, nil, nil
 	}
+	if data[i] == '\r' && i+1 < len(data) && data[i+1] == '\n' {
+		r.afterCR = false
+		return i + 2, data[:i], nil
+	}
+	r.afterCR = data[i] == '\r'
+	return i + 1, data[:i], nil
 }

@@ -81,8 +81,8 @@ func WithMaxRetries(n int) Option {
 }
 
 // WithTimeout bounds each HTTP attempt. For regular calls it covers the whole
-// response; for streams it covers only the wait for response headers, so a
-// long stream is limited by its context alone. Zero disables the timeout.
+// response. For streams it stops once a successful response starts, so a long
+// stream is limited by its context alone. Zero disables the timeout.
 func WithTimeout(d time.Duration) Option {
 	return func(c *Client) { c.timeout = max(d, 0) }
 }
@@ -189,7 +189,7 @@ func (c *Client) send(ctx context.Context, r request) (*http.Response, error) {
 		select {
 		case <-ctx.Done():
 			timer.Stop()
-			return nil, ctx.Err()
+			return nil, context.Cause(ctx)
 		case <-timer.C:
 		}
 	}
@@ -225,7 +225,7 @@ func (c *Client) attempt(ctx context.Context, r request, payload []byte) (*http.
 	if c.timeout > 0 {
 		d := c.timeout
 		timer = time.AfterFunc(d, func() {
-			cancel(fmt.Errorf("avelin: request timed out after %s: %w", d, context.DeadlineExceeded))
+			cancel(fmt.Errorf("request timed out after %s: %w", d, context.DeadlineExceeded))
 		})
 	}
 	resp, err := c.httpClient.Do(req)
@@ -239,7 +239,7 @@ func (c *Client) attempt(ctx context.Context, r request, payload []byte) (*http.
 		cancel(nil)
 		return nil, fmt.Errorf("avelin: %w", err)
 	}
-	if r.stream && timer != nil {
+	if r.stream && timer != nil && resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		timer.Stop()
 	}
 	resp.Body = &attemptBody{ReadCloser: resp.Body, parent: ctx, ctx: actx, cancel: cancel, timer: timer}
@@ -296,8 +296,8 @@ func parseRetryAfter(v string, now time.Time) (time.Duration, bool) {
 	if v == "" {
 		return 0, false
 	}
-	if secs, err := strconv.Atoi(v); err == nil {
-		return time.Duration(max(secs, 0)) * time.Second, true
+	if secs, err := strconv.Atoi(v); err == nil && secs >= 0 {
+		return time.Duration(min(secs, 1<<30)) * time.Second, true // capped so it cannot overflow
 	}
 	if t, err := http.ParseTime(v); err == nil {
 		return max(t.Sub(now), 0), true

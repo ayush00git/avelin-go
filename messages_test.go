@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -104,6 +105,24 @@ func TestCreateMessageToolUse(t *testing.T) {
 		{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_abc123","content":"31C and sunny"}]}]`)
 }
 
+func TestMessageParamRoundTrip(t *testing.T) {
+	in := []MessageParam{
+		{Role: "user", Content: "hi"},
+		{Role: "user", Blocks: []ContentBlock{{Type: "tool_result", ToolUseID: "toolu_1", Content: "ok"}}},
+	}
+	data, err := json.Marshal(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []MessageParam
+	if err := json.Unmarshal(data, &out); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(in, out) {
+		t.Fatalf("round trip:\n got %+v\nwant %+v", out, in)
+	}
+}
+
 func TestCreateMessageAPIError(t *testing.T) {
 	srv, _ := mockServer(t)
 	_, err := newTestClient(srv).CreateMessage(context.Background(), MessageRequest{
@@ -180,6 +199,8 @@ func TestMessageStreamEndings(t *testing.T) {
 			"message_start ping custom message_stop", func(err error) bool { return err == nil }},
 		{"type from event field and multi-line data",
 			start + "event: message_stop\ndata: {\n: comment\ndata: }\n\n",
+			"message_start message_stop", func(err error) bool { return err == nil }},
+		{"empty data keep-alive", start + "data:\n\nevent: message_stop\ndata: {\"type\":\"message_stop\"}\n\n",
 			"message_start message_stop", func(err error) bool { return err == nil }},
 		{"no message_stop", start + "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n",
 			"message_start content_block_start", func(err error) bool { return errors.Is(err, io.ErrUnexpectedEOF) }},

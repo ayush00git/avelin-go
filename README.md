@@ -44,7 +44,7 @@ More in [examples/](examples): `chat`, `stream`, `messages`.
 | `WithBaseURL` | `AVELIN_BASE_URL` env var, else `https://api.avelin.ai` (no `/v1`) |
 | `WithHTTPClient` | `http.DefaultClient` |
 | `WithMaxRetries` | 2 retries on 429 and 5xx, exponential backoff with jitter, honors `Retry-After` |
-| `WithTimeout` | 10 minutes per attempt; for streams it only covers the wait for headers |
+| `WithTimeout` | 10 minutes per attempt; a stream is only timed until a successful response starts |
 
 Every call takes a `context.Context`. A stream is never retried once it has started.
 
@@ -84,9 +84,9 @@ if errors.As(err, &apiErr) && apiErr.StatusCode == 429 {
 }
 ```
 
-Every result carries `Meta` (HTTP status and headers) and `Raw` (the full JSON body), so headers
-and fields this package does not model are still reachable. Streams expose `Meta()`, and each
-event has `Raw`.
+Every value a method returns carries `Meta` (HTTP status and headers) and `Raw` (the full JSON
+body), so headers and fields this package does not model are still reachable. Streams expose
+`Meta()`, and each event has `Raw`.
 
 ## Model IDs
 
