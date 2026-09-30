@@ -232,16 +232,20 @@ func TestChatStreamRetriesBeforeStart(t *testing.T) {
 	}
 }
 
-// stall sends one chunk and then waits for the client to go away.
-func stall(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "text/event-stream")
-	io.WriteString(w, `data: {"choices":[{"delta":{"content":"Hi"}}]}`+"\n\n")
-	w.(http.Flusher).Flush()
-	waitForClient(w, r)
+// stallAfter sends one SSE event and then waits for the client to go away.
+func stallAfter(event string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		io.WriteString(w, event+"\n\n")
+		w.(http.Flusher).Flush()
+		waitForClient(w, r)
+	}
 }
 
+const chatChunkEvent = `data: {"choices":[{"delta":{"content":"Hi"}}]}`
+
 func TestChatStreamContextCancel(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(stall))
+	srv := httptest.NewServer(stallAfter(chatChunkEvent))
 	defer srv.Close()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -260,7 +264,7 @@ func TestChatStreamContextCancel(t *testing.T) {
 }
 
 func TestChatStreamCloseEarly(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(stall))
+	srv := httptest.NewServer(stallAfter(chatChunkEvent))
 	defer srv.Close()
 	stream, err := newTestClient(srv).CreateChatCompletionStream(context.Background(), ChatCompletionRequest{Model: "m", Messages: userMessage("hi")})
 	if err != nil {

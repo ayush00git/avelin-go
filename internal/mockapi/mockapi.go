@@ -17,6 +17,7 @@ func New(dir fs.FS, streamDelay time.Duration) http.Handler {
 	s := &server{dir: dir, delay: streamDelay}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/chat/completions", s.auth(s.chat))
+	mux.HandleFunc("POST /v1/messages", s.auth(s.messages))
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, `{"detail": "Not Found"}`)
 	})
@@ -59,6 +60,27 @@ func (s *server) chat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.file(w, "chat_completion.json")
+}
+
+func (s *server) messages(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Model     string            `json:"model"`
+		MaxTokens int               `json:"max_tokens"`
+		Messages  []json.RawMessage `json:"messages"`
+		Stream    bool              `json:"stream"`
+	}
+	if !decode(w, r, &req) {
+		return
+	}
+	if req.Model == "" || req.MaxTokens <= 0 || len(req.Messages) == 0 {
+		badRequest(w, "model, max_tokens and messages are required")
+		return
+	}
+	if req.Stream {
+		s.stream(w, "messages_stream.txt")
+		return
+	}
+	s.file(w, "message.json")
 }
 
 func (s *server) file(w http.ResponseWriter, name string) {
