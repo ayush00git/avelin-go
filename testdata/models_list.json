@@ -1,0 +1,23 @@
+{
+  "object": "list",
+  "data": [
+    {
+      "id": "avelin-ultra",
+      "object": "model",
+      "created": 1704067200,
+      "owned_by": "avelin"
+    },
+    {
+      "id": "avelin-pro",
+      "object": "model",
+      "created": 1704067200,
+      "owned_by": "avelin"
+    },
+    {
+      "id": "avelin-fast",
+      "object": "model",
+      "created": 1704067200,
+      "owned_by": "avelin"
+    }
+  ]
+}

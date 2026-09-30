@@ -16,7 +16,7 @@ import (
 func main() {
 	client := avelin.NewClient()
 	msg, err := client.CreateMessage(context.Background(), avelin.MessageRequest{
-		Model:     "avelin-coding-fast",
+		Model:     avelin.ModelCodingFast,
 		MaxTokens: 1024,
 		System:    "You are a senior software engineer.",
 		Messages:  []avelin.MessageParam{{Role: "user", Content: "Write a Go function to debounce calls."}},
