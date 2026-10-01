@@ -112,9 +112,10 @@ See [VERIFY.md](VERIFY.md) for step-by-step checks.
 
 ## Status
 
-Built and tested against AVELIN's published docs using mock servers; it has not been run against
-the authenticated API. Schema sources and assumptions are in [PLAN.md](PLAN.md), and doc
-inconsistencies found along the way are in [FINDINGS.md](FINDINGS.md).
+Built from AVELIN's published docs and tested against mock servers only; it has not been run
+against the authenticated API. Assumed rather than documented: the request ID header
+(`X-Request-Id`, then `Request-Id`), how errors appear mid-stream (they end the stream with
+`*APIError`), and `thinking.budget_tokens` (from Anthropic's spec).
 
 ## License
 

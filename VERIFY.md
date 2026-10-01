@@ -109,4 +109,5 @@ Run every command from the repository root. Steps 1 to 7 and 10 to 12 need no ne
     AVELIN_API_KEY=sk-avelin-... go test -tags integration -run Integration -v .
     ```
     Expect: 7 `--- PASS` lines. The logs print response headers and the real error body shape,
-    which are worth comparing with [FINDINGS.md](FINDINGS.md). Without a key all 7 print `--- SKIP`.
+    which show whether the assumptions in the README's Status section hold. Without a key all 7
+    print `--- SKIP`.
