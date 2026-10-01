@@ -13,7 +13,7 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/tncworks/avelin-go"
+	"github.com/ayush00git/avelin-go"
 )
 
 func main() {
