@@ -66,7 +66,7 @@ Results: Meta{StatusCode, Header} + Raw (full JSON).  Helpers: Ptr, Message.Text
   truncated and broken streams, error events; fixtures in `testdata/` copied from the docs' examples.
 - `-tags integration` (skips without AVELIN_API_KEY), `-tags live` (public catalog only).
 - genmodels test keeps `models_gen.go` in sync with the catalog snapshot.
-- Dev machine had no C compiler; `-race` ran with `CC="zig cc"`. staticcheck 2026.2.1 clean.
+- `go test -race ./...` passes with the system gcc (5 consecutive runs). staticcheck 2026.2.1 clean.
 - Phase 7 review fixed: `"error": null` chunks ending streams, unbounded error-body reads on
   streams, `Retry-After` overflow, empty data events, BOM and bare-CR handling, and
   `MessageParam` JSON round trips; each has a regression test.
