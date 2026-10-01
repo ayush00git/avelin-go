@@ -16,7 +16,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/tncworks/avelin-go/internal/mockapi"
+	"github.com/ayush00git/avelin-go/internal/mockapi"
 )
 
 func main() {
