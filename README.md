@@ -1,5 +1,7 @@
 # avelin-go
 
+[![CI](https://github.com/ayush00git/avelin-go/actions/workflows/ci.yml/badge.svg)](https://github.com/ayush00git/avelin-go/actions/workflows/ci.yml)
+
 Unofficial Go client for the [AVELIN](https://avelin.ai) AI API: chat completions (OpenAI-style),
 messages (Anthropic-style), models, embeddings and the public model catalog.
 Standard library only, Go 1.22+. Not affiliated with or endorsed by AVELIN.

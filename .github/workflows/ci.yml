@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "0 6 * * 1" # Mondays: check the live public catalog
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    if: github.event_name != 'schedule'
+    name: test (Go ${{ matrix.go }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        go: ["1.22", "stable"] # minimum from go.mod, and latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ matrix.go }}
+          cache: false # no dependencies to cache
+      - name: Build
+        run: go build ./...
+      - name: Vet
+        run: |
+          go vet ./...
+          go vet -tags integration,live ./...
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "Run gofmt -w on:"; echo "$unformatted"; exit 1
+          fi
+      - name: No third-party dependencies
+        run: test "$(go list -m all)" = "$(go list -m)"
+      - name: Test (race)
+        run: go test -race ./...
+      - name: staticcheck
+        if: matrix.go == 'stable'
+        run: go run honnef.co/go/tools/cmd/staticcheck@latest ./...
+
+  live:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: stable
+          cache: false
+      - name: Public catalog (no key)
+        run: go test -tags live -run Live -v .
+      - name: Integration (manual runs only; skips without the AVELIN_API_KEY secret)
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          AVELIN_API_KEY: ${{ secrets.AVELIN_API_KEY }}
+        run: go test -tags integration -run Integration -v .
