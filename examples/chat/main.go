@@ -9,7 +9,7 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/ayush00git/avelin-go"
+	"github.com/tncworks/avelin-go"
 )
 
 func main() {

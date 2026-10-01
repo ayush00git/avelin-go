@@ -24,13 +24,13 @@ Run every command from the repository root. Steps 1 to 7 and 10 to 12 need no ne
    ```sh
    go list -m all; grep -c require go.mod
    ```
-   Expect: `github.com/ayush00git/avelin-go` and then `0`.
+   Expect: `github.com/tncworks/avelin-go` and then `0`.
 
 5. Unit tests.
    ```sh
    go test ./...
    ```
-   Expect: `ok` for `github.com/ayush00git/avelin-go`, `cmd/avelin-models` and `internal/genmodels`;
+   Expect: `ok` for `github.com/tncworks/avelin-go`, `cmd/avelin-models` and `internal/genmodels`;
    the other packages print `[no test files]`. Takes about 2 seconds (one test waits on a 1s `Retry-After`).
 
 6. Race detector.

@@ -16,7 +16,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ayush00git/avelin-go/internal/mockapi"
+	"github.com/tncworks/avelin-go/internal/mockapi"
 )
 
 // newTestClient returns a client for srv with a test key and fast backoff.

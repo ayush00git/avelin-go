@@ -1,3 +1,3 @@
-module github.com/ayush00git/avelin-go
+module github.com/tncworks/avelin-go
 
 go 1.22

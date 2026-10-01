@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ayush00git/avelin-go"
+	"github.com/tncworks/avelin-go"
 )
 
 func integrationClient(t *testing.T) (*avelin.Client, context.Context) {
