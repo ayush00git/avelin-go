@@ -33,7 +33,9 @@ type ChatCompletionRequest struct {
 }
 
 // ChatMessage is one message of a conversation. In a response it is the
-// generated message; in a stream chunk it is the incremental delta.
+// generated message; in a stream chunk it is the incremental delta. When a
+// response message is sent back as history, ReasoningContent goes with it;
+// clear it if the server rejects reasoning in input.
 type ChatMessage struct {
 	// Role is "system", "user", "assistant" or "tool".
 	Role    string `json:"role"`
@@ -65,7 +67,7 @@ type FunctionDefinition struct {
 // ToolCall is a function call requested by the model.
 type ToolCall struct {
 	// Index identifies the call across stream chunks. It is nil outside
-	// streams.
+	// streams; set it to nil before sending a streamed call back as history.
 	Index    *int         `json:"index,omitempty"`
 	ID       string       `json:"id,omitempty"`
 	Type     string       `json:"type,omitempty"`
@@ -166,16 +168,13 @@ func decodeChatEvent(meta Meta, ev sseEvent) (*ChatCompletionChunk, bool, error)
 	if ev.data == "[DONE]" {
 		return nil, true, nil
 	}
-	var chunk struct {
-		ChatCompletionChunk
-		Error json.RawMessage `json:"error"`
+	if hasError([]byte(ev.data)) {
+		return nil, false, parseAPIError(meta.StatusCode, meta.Header, []byte(ev.data))
 	}
+	var chunk ChatCompletionChunk
 	if err := json.Unmarshal([]byte(ev.data), &chunk); err != nil {
 		return nil, false, fmt.Errorf("avelin: decode stream chunk: %w", err)
 	}
-	if len(chunk.Error) > 0 && string(chunk.Error) != "null" {
-		return nil, false, parseAPIError(meta.StatusCode, meta.Header, []byte(ev.data))
-	}
 	chunk.Raw = json.RawMessage(ev.data)
-	return &chunk.ChatCompletionChunk, false, nil
+	return &chunk, false, nil
 }

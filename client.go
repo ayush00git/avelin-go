@@ -14,8 +14,10 @@ import (
 	"fmt"
 	"io"
 	"math/rand/v2"
+	"mime"
 	"net/http"
 	"os"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"time"
@@ -31,10 +33,24 @@ const (
 	// DefaultTimeout bounds each HTTP attempt. See WithTimeout.
 	DefaultTimeout = 10 * time.Minute
 
-	userAgent     = "avelin-go/0.1.0"
+	modulePath    = "github.com/ayush00git/avelin-go"
 	maxBackoff    = 8 * time.Second
 	maxRetryAfter = 60 * time.Second
 )
+
+// userAgent names this module and the version recorded in the build.
+var userAgent = "avelin-go/" + moduleVersion()
+
+func moduleVersion() string {
+	if bi, ok := debug.ReadBuildInfo(); ok {
+		for _, m := range append(bi.Deps, &bi.Main) {
+			if m.Path == modulePath && m.Version != "" && m.Version != "(devel)" {
+				return m.Version
+			}
+		}
+	}
+	return "devel"
+}
 
 // ErrMissingAPIKey is returned, without sending a request, when an endpoint
 // that needs a key is called and no key is configured.
@@ -65,7 +81,8 @@ func WithBaseURL(url string) Option {
 	return func(c *Client) { c.baseURL = strings.TrimRight(url, "/") }
 }
 
-// WithHTTPClient sets the HTTP client used for requests.
+// WithHTTPClient sets the HTTP client used for requests. Its Timeout, if
+// set, also cuts off long streams; prefer WithTimeout.
 func WithHTTPClient(hc *http.Client) Option {
 	return func(c *Client) {
 		if hc != nil {
@@ -150,6 +167,9 @@ func (c *Client) do(ctx context.Context, r request, out any) (Meta, json.RawMess
 	if err != nil {
 		return Meta{}, nil, fmt.Errorf("avelin: read response: %w", err)
 	}
+	if hasError(data) {
+		return Meta{}, nil, parseAPIError(resp.StatusCode, resp.Header, data)
+	}
 	if err := json.Unmarshal(data, out); err != nil {
 		return Meta{}, nil, fmt.Errorf("avelin: decode response: %w", err)
 	}
@@ -175,6 +195,9 @@ func (c *Client) send(ctx context.Context, r request) (*http.Response, error) {
 			return nil, err
 		}
 		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			if r.stream && isJSON(resp.Header) {
+				return nil, notAStream(resp)
+			}
 			return resp, nil
 		}
 		apiErr := newAPIError(resp)
@@ -271,6 +294,21 @@ func (b *attemptBody) Close() error {
 	err := b.ReadCloser.Close()
 	b.cancel(nil)
 	return err
+}
+
+func isJSON(h http.Header) bool {
+	mediaType, _, _ := mime.ParseMediaType(h.Get("Content-Type"))
+	return mediaType == "application/json"
+}
+
+// notAStream handles a stream request answered with plain JSON: an error
+// body becomes an *APIError, anything else means "stream" was ignored.
+func notAStream(resp *http.Response) error {
+	apiErr := newAPIError(resp)
+	if hasError(apiErr.Body) {
+		return apiErr
+	}
+	return fmt.Errorf("avelin: expected an event stream, got %s", resp.Header.Get("Content-Type"))
 }
 
 func retryable(status int) bool {

@@ -3,6 +3,7 @@ package avelin
 import (
 	"bufio"
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -25,7 +26,8 @@ var errStreamTruncated = fmt.Errorf("avelin: stream ended before completion: %w"
 //	}
 //
 // A stream that ends without its terminating event ([DONE] for chat,
-// message_stop for messages) reports an error wrapping io.ErrUnexpectedEOF.
+// message_stop for messages), or in the middle of an event, reports an error
+// wrapping io.ErrUnexpectedEOF.
 // Events with empty data, such as keep-alives, are skipped. Streams are never
 // retried once the response has started.
 type Stream[T any] struct {
@@ -63,6 +65,10 @@ func (s *Stream[T]) Next() bool {
 		var v *T
 		if err == nil && ev.data != "" {
 			v, s.done, err = s.decode(s.meta, ev)
+			var apiErr *APIError
+			if err != nil && ev.unterminated && !errors.As(err, &apiErr) {
+				err = errStreamTruncated
+			}
 		}
 		if err != nil {
 			s.err = err
@@ -110,11 +116,15 @@ func (s *Stream[T]) Meta() Meta {
 type sseEvent struct {
 	event string
 	data  string
+	// unterminated marks an event cut off by the end of input, with no
+	// closing blank line.
+	unterminated bool
 }
 
 // sseReader parses text/event-stream as specified by the WHATWG HTML
 // standard: a leading BOM, comments, multi-line data fields and CR, LF or
-// CRLF line endings. The id and retry fields are ignored.
+// CRLF line endings. The id and retry fields are ignored. Unlike the spec, it
+// keeps a final event that has no closing blank line (see next).
 type sseReader struct {
 	scanner *bufio.Scanner
 	started bool // the first line has been read
@@ -128,8 +138,10 @@ func newSSEReader(r io.Reader) *sseReader {
 	return sr
 }
 
-// next returns the next event that has data. At the end of the input it
-// returns io.EOF, discarding an event not terminated by a blank line.
+// next returns the next event that has data, then io.EOF at the end of the
+// input. The spec discards a final event that has no closing blank line, but
+// some servers close the stream right after their last event, so it is
+// returned with unterminated set.
 func (r *sseReader) next() (sseEvent, error) {
 	var event string
 	var data strings.Builder
@@ -161,6 +173,9 @@ func (r *sseReader) next() (sseEvent, error) {
 	}
 	if err := r.scanner.Err(); err != nil {
 		return sseEvent{}, err
+	}
+	if data.Len() > 0 {
+		return sseEvent{event: event, data: strings.TrimSuffix(data.String(), "\n"), unterminated: true}, nil
 	}
 	return sseEvent{}, io.EOF
 }

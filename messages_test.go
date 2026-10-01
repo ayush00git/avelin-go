@@ -202,6 +202,18 @@ func TestMessageStreamEndings(t *testing.T) {
 			"message_start message_stop", func(err error) bool { return err == nil }},
 		{"empty data keep-alive", start + "data:\n\nevent: message_stop\ndata: {\"type\":\"message_stop\"}\n\n",
 			"message_start message_stop", func(err error) bool { return err == nil }},
+		{"message_stop without closing blank line", start + "event: message_stop\ndata: {\"type\":\"message_stop\"}\n",
+			"message_start message_stop", func(err error) bool { return err == nil }},
+		{"error event with plain-text data", start + "event: error\ndata: Internal Server Error\n\n",
+			"message_start", func(err error) bool {
+				var apiErr *APIError
+				return errors.As(err, &apiErr) && apiErr.Message == "Internal Server Error"
+			}},
+		{"OpenAI-shaped error without event line", start + "data: {\"error\":{\"message\":\"overloaded\",\"type\":\"server_error\",\"code\":500}}\n\n",
+			"message_start", func(err error) bool {
+				var apiErr *APIError
+				return errors.As(err, &apiErr) && apiErr.Message == "overloaded" && apiErr.Code == "500"
+			}},
 		{"no message_stop", start + "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n",
 			"message_start content_block_start", func(err error) bool { return errors.Is(err, io.ErrUnexpectedEOF) }},
 		{"broken mid-event", start + "event: content_block_delta\ndata: {\"type\":\"content_bl",
@@ -259,5 +271,86 @@ func TestMessageStreamRetryAndCancel(t *testing.T) {
 	}
 	if calls.Load() != 2 {
 		t.Fatalf("calls = %d, want 2", calls.Load())
+	}
+}
+
+// TestMessageRequestJSONFields sets every request field, so a wrong JSON tag
+// fails here.
+func TestMessageRequestJSONFields(t *testing.T) {
+	data, err := json.Marshal(MessageRequest{
+		Model: ModelCodingPro, MaxTokens: 512, System: "s",
+		Messages: []MessageParam{
+			{Role: "assistant", Blocks: []ContentBlock{
+				{Type: "thinking", Thinking: "t", Signature: "sig"},
+				{Type: "tool_use", ID: "toolu_1", Name: "get_weather", Input: json.RawMessage(`{"city":"Dubai"}`)},
+			}},
+			{Role: "user", Blocks: []ContentBlock{{Type: "tool_result", ToolUseID: "toolu_1", Content: "no data", IsError: true}}},
+		},
+		Thinking:    &Thinking{Type: "enabled", BudgetTokens: 2048},
+		Tools:       []MessageTool{{Name: "get_weather", Description: "d", InputSchema: map[string]any{"type": "object"}}},
+		Temperature: Ptr(0.0), TopP: Ptr(0.9), TopK: 40, StopSequences: []string{"END"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertJSON(t, data, `{"model":"avelin-coding-pro","max_tokens":512,"system":"s","messages":[
+		{"role":"assistant","content":[{"type":"thinking","thinking":"t","signature":"sig"},
+			{"type":"tool_use","id":"toolu_1","name":"get_weather","input":{"city":"Dubai"}}]},
+		{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"no data","is_error":true}]}],
+		"thinking":{"type":"enabled","budget_tokens":2048},
+		"tools":[{"name":"get_weather","description":"d","input_schema":{"type":"object"}}],
+		"temperature":0,"top_p":0.9,"top_k":40,"stop_sequences":["END"]}`)
+}
+
+func TestMessageStreamToolUse(t *testing.T) {
+	body := `event: content_block_start
+data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"sig123"}}
+
+event: content_block_start
+data: {"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_abc123","name":"get_weather","input":{}}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"city\": "}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"\"Abu Dhabi\"}"}}
+
+event: message_delta
+data: {"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":20}}
+
+event: message_stop
+data: {"type":"message_stop"}
+
+`
+	srv := httptest.NewServer(sse(body))
+	defer srv.Close()
+	stream, err := newTestClient(srv).CreateMessageStream(context.Background(), MessageRequest{
+		Model: "m", MaxTokens: 1, Messages: []MessageParam{{Role: "user", Content: "hi"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stream.Close()
+	var signature, toolName, input, stop string
+	var outputTokens int
+	for stream.Next() {
+		ev := stream.Current()
+		if ev.ContentBlock != nil && ev.ContentBlock.Type == "tool_use" && ev.Index == 1 && ev.ContentBlock.ID == "toolu_abc123" {
+			toolName = ev.ContentBlock.Name
+		}
+		if ev.Delta != nil {
+			signature += ev.Delta.Signature
+			input += ev.Delta.PartialJSON
+			stop += ev.Delta.StopReason
+		}
+		if ev.Usage != nil {
+			outputTokens = ev.Usage.OutputTokens
+		}
+	}
+	if stream.Err() != nil || signature != "sig123" || toolName != "get_weather" || input != `{"city": "Abu Dhabi"}` || stop != "tool_use" || outputTokens != 20 {
+		t.Fatalf("signature=%q tool=%q input=%q stop=%q tokens=%d err=%v", signature, toolName, input, stop, outputTokens, stream.Err())
 	}
 }

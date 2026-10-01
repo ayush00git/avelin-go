@@ -183,6 +183,13 @@ func TestChatStreamEndings(t *testing.T) {
 			func(err error) bool { return err == nil }},
 		{"empty data keep-alive", "data:\n\ndata: " + chunk + "\n\ndata: [DONE]\n\n", 1,
 			func(err error) bool { return err == nil }},
+		{"[DONE] without closing blank line", "data: " + chunk + "\n\ndata: [DONE]\n", 1,
+			func(err error) bool { return err == nil }},
+		{"empty error object", "data: {\"error\":{}}\n\n", 0,
+			func(err error) bool {
+				var apiErr *APIError
+				return errors.As(err, &apiErr) && apiErr.Message == "error without a message"
+			}},
 		{"no [DONE]", "data: " + chunk + "\n\n", 1,
 			func(err error) bool { return errors.Is(err, io.ErrUnexpectedEOF) }},
 		{"broken mid-event", "data: " + chunk + "\n\ndata: {\"id\":\"c\",\"cho", 1,
@@ -331,4 +338,67 @@ func TestToolResultMessageJSON(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertJSON(t, data, `{"role":"tool","content":"{\"temp_c\": 31}","tool_call_id":"call_abc123"}`)
+}
+
+// TestChatRequestJSONFields sets every request field, so a wrong JSON tag
+// fails here.
+func TestChatRequestJSONFields(t *testing.T) {
+	index := 0
+	data, err := json.Marshal(ChatCompletionRequest{
+		Model: ModelPro,
+		Messages: []ChatMessage{
+			{Role: "assistant", ToolCalls: []ToolCall{{Index: &index, ID: "call_1", Type: "function",
+				Function: FunctionCall{Name: "get_weather", Arguments: "{}"}}}},
+			{Role: "tool", ToolCallID: "call_1", Content: "31C", ReasoningContent: "r"},
+		},
+		MaxTokens: 10, Temperature: Ptr(0.0), TopP: Ptr(0.9), N: 2, Stop: []string{"END"},
+		PresencePenalty: Ptr(0.5), FrequencyPenalty: Ptr(-0.5),
+		Tools:      []Tool{{Type: "function", Function: FunctionDefinition{Name: "get_weather", Description: "d", Parameters: map[string]any{"type": "object"}}}},
+		ToolChoice: "none", ReasoningEffort: "high",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertJSON(t, data, `{"model":"avelin-pro","messages":[
+		{"role":"assistant","content":"","tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"get_weather","arguments":"{}"}}]},
+		{"role":"tool","content":"31C","reasoning_content":"r","tool_call_id":"call_1"}],
+		"max_tokens":10,"temperature":0,"top_p":0.9,"n":2,"stop":["END"],"presence_penalty":0.5,"frequency_penalty":-0.5,
+		"tools":[{"type":"function","function":{"name":"get_weather","description":"d","parameters":{"type":"object"}}}],
+		"tool_choice":"none","reasoning_effort":"high"}`)
+}
+
+func TestChatStreamToolCallDeltas(t *testing.T) {
+	body := `data: {"choices":[{"index":0,"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"call_abc123","type":"function","function":{"name":"get_weather","arguments":""}}]}}]}
+
+data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"city\": "}}]}}]}
+
+data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"Abu Dhabi\"}"}}]},"finish_reason":"tool_calls"}]}
+
+data: [DONE]
+
+`
+	srv := httptest.NewServer(sse(body))
+	defer srv.Close()
+	stream, err := newTestClient(srv).CreateChatCompletionStream(context.Background(), ChatCompletionRequest{Model: "m", Messages: userMessage("hi")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stream.Close()
+	var id, name, args, finish string
+	for stream.Next() {
+		for _, choice := range stream.Current().Choices {
+			finish += choice.FinishReason
+			for _, call := range choice.Delta.ToolCalls {
+				if call.Index == nil || *call.Index != 0 {
+					t.Fatalf("tool call index = %v", call.Index)
+				}
+				id += call.ID
+				name += call.Function.Name
+				args += call.Function.Arguments
+			}
+		}
+	}
+	if stream.Err() != nil || id != "call_abc123" || name != "get_weather" || args != `{"city": "Abu Dhabi"}` || finish != "tool_calls" {
+		t.Fatalf("id=%q name=%q args=%q finish=%q err=%v", id, name, args, finish, stream.Err())
+	}
 }
