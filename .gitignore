@@ -2,3 +2,13 @@
 /mockserver
 *.test
 *.out
+
+# Local notes, not published
+FINDINGS.md
+PLAN.md
+
+# Secrets and editor files
+.env
+.idea/
+.vscode/
+.DS_Store
