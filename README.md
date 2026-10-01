@@ -7,7 +7,7 @@ Standard library only, Go 1.22+. Not affiliated with or endorsed by AVELIN.
 ## Install
 
 ```sh
-go get github.com/ayush00git/avelin-go
+go get github.com/tncworks/avelin-go
 ```
 
 ## Quickstart
