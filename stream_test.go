@@ -3,6 +3,7 @@ package avelin
 import (
 	"errors"
 	"io"
+	"net/http"
 	"reflect"
 	"strings"
 	"testing"
@@ -36,7 +37,7 @@ func TestSSEReader(t *testing.T) {
 		"data:  two spaces\n\n" +
 		"id: 7\nretry: 100\nunknown: x\ndata: after ignored fields\n\n" +
 		"data:\n\n" +
-		"data: incomplete, discarded at EOF"
+		"data: no closing blank line"
 	want := []sseEvent{
 		{event: "first", data: "line1\nline2\n"},
 		{data: "crlf"},
@@ -44,6 +45,7 @@ func TestSSEReader(t *testing.T) {
 		{data: " two spaces"},
 		{data: "after ignored fields"},
 		{data: ""},
+		{data: "no closing blank line", unterminated: true},
 	}
 	for name, r := range map[string]io.Reader{
 		"whole":    strings.NewReader(input),
@@ -55,7 +57,7 @@ func TestSSEReader(t *testing.T) {
 				t.Fatalf("err = %v, want io.EOF", err)
 			}
 			if !reflect.DeepEqual(got, want) {
-				t.Fatalf("events:\n got %q\nwant %q", got, want)
+				t.Fatalf("events:\n got %+v\nwant %+v", got, want)
 			}
 		})
 	}
@@ -81,7 +83,7 @@ func TestSSEReaderReadError(t *testing.T) {
 func TestSSEReaderBOM(t *testing.T) {
 	got, err := readAllEvents(t, strings.NewReader("\uFEFFdata: x\n\n"))
 	if err != io.EOF || !reflect.DeepEqual(got, []sseEvent{{data: "x"}}) {
-		t.Fatalf("got %q, err %v", got, err)
+		t.Fatalf("got %+v, err %v", got, err)
 	}
 }
 
@@ -99,9 +101,36 @@ func TestSSEReaderCRDispatchesAtOnce(t *testing.T) {
 	select {
 	case ev := <-got:
 		if ev.data != "a" {
-			t.Fatalf("event = %q", ev)
+			t.Fatalf("event = %+v", ev)
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("event was not dispatched until more input arrived")
+	}
+}
+
+type closeRecorder struct {
+	io.Reader
+	closed bool
+}
+
+func (c *closeRecorder) Close() error {
+	c.closed = true
+	return nil
+}
+
+// TestStreamClosesBodyWhenDone checks that a finished or failed stream
+// releases its connection without waiting for the caller's Close.
+func TestStreamClosesBodyWhenDone(t *testing.T) {
+	for name, body := range map[string]string{
+		"terminator": "data: {}\n\ndata: [DONE]\n\n",
+		"error":      "data: {nope}\n\n",
+	} {
+		rc := &closeRecorder{Reader: strings.NewReader(body)}
+		s := newStream(&http.Response{StatusCode: 200, Header: http.Header{}, Body: rc}, decodeChatEvent)
+		for s.Next() {
+		}
+		if !rc.closed {
+			t.Errorf("%s: body not closed when the stream ended", name)
+		}
 	}
 }

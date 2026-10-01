@@ -351,3 +351,69 @@ func TestBackoffBounds(t *testing.T) {
 		}
 	}
 }
+
+func TestUserAgent(t *testing.T) {
+	if !strings.HasPrefix(userAgent, "avelin-go/") || strings.ContainsAny(userAgent, "() ") {
+		t.Fatalf("userAgent = %q", userAgent)
+	}
+}
+
+func TestErrorBodyOnSuccessStatus(t *testing.T) {
+	srv := httptest.NewServer(status(200, `{"error":{"message":"quota exceeded","type":"billing_error"}}`))
+	defer srv.Close()
+	err := get(context.Background(), newTestClient(srv))
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) || apiErr.StatusCode != 200 || apiErr.Message != "quota exceeded" {
+		t.Fatalf("err = %v, want *APIError", err)
+	}
+}
+
+func TestStreamAnsweredWithJSON(t *testing.T) {
+	tests := []struct {
+		name, body string
+		check      func(error) bool
+	}{
+		{"error body", `{"error":{"message":"Access denied."}}`, func(err error) bool {
+			var apiErr *APIError
+			return errors.As(err, &apiErr) && apiErr.Message == "Access denied."
+		}},
+		{"stream ignored", string(fixture(t, "chat_completion.json")), func(err error) bool {
+			return err != nil && strings.Contains(err.Error(), "expected an event stream, got application/json")
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := httptest.NewServer(status(200, tt.body))
+			defer srv.Close()
+			_, err := newTestClient(srv).CreateChatCompletionStream(context.Background(), ChatCompletionRequest{Model: "m", Messages: userMessage("hi")})
+			if !tt.check(err) {
+				t.Fatalf("err = %v", err)
+			}
+		})
+	}
+}
+
+func TestErrorBodyCapped(t *testing.T) {
+	srv := httptest.NewServer(status(500, strings.Repeat("x", 2<<20)))
+	defer srv.Close()
+	err := get(context.Background(), newTestClient(srv, WithMaxRetries(0)))
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) || len(apiErr.Body) != 1<<20 {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestAttemptBodyCloseReleasesAttempt(t *testing.T) {
+	ctx, cancel := context.WithCancelCause(context.Background())
+	timer := time.AfterFunc(time.Hour, func() {})
+	b := &attemptBody{ReadCloser: io.NopCloser(strings.NewReader("")), parent: context.Background(), ctx: ctx, cancel: cancel, timer: timer}
+	if err := b.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if timer.Stop() {
+		t.Error("timer still running after Close")
+	}
+	if ctx.Err() == nil {
+		t.Error("attempt context not cancelled after Close")
+	}
+}

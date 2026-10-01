@@ -82,10 +82,21 @@ func parseAPIError(status int, header http.Header, body []byte) *APIError {
 			e.Message = strings.ToValidUTF8(e.Message[:200], "") + "..."
 		}
 	}
-	if e.Message == "" {
+	if e.Message == "" && status >= 400 {
 		e.Message = http.StatusText(status)
+	} else if e.Message == "" {
+		e.Message = "error without a message"
 	}
 	return e
+}
+
+// hasError reports whether a JSON body or event has a top-level "error"
+// field that is not null.
+func hasError(data []byte) bool {
+	var probe struct {
+		Error json.RawMessage `json:"error"`
+	}
+	return json.Unmarshal(data, &probe) == nil && len(probe.Error) > 0 && string(probe.Error) != "null"
 }
 
 // rawText returns a JSON string's value, or other JSON values as written.

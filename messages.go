@@ -226,8 +226,12 @@ func messagesRequest(req MessageRequest, stream bool) request {
 }
 
 // decodeMessageEvent decodes one messages stream event. message_stop ends the
-// stream.
+// stream. An "error" event, or a payload with an "error" object in either the
+// Anthropic or the OpenAI shape, ends it with an *APIError.
 func decodeMessageEvent(meta Meta, ev sseEvent) (*MessageStreamEvent, bool, error) {
+	if ev.event == "error" || hasError([]byte(ev.data)) {
+		return nil, false, parseAPIError(meta.StatusCode, meta.Header, []byte(ev.data))
+	}
 	var out MessageStreamEvent
 	if err := json.Unmarshal([]byte(ev.data), &out); err != nil {
 		return nil, false, fmt.Errorf("avelin: decode stream event: %w", err)
@@ -235,7 +239,7 @@ func decodeMessageEvent(meta Meta, ev sseEvent) (*MessageStreamEvent, bool, erro
 	if out.Type == "" {
 		out.Type = ev.event
 	}
-	if out.Type == "error" || ev.event == "error" {
+	if out.Type == "error" {
 		return nil, false, parseAPIError(meta.StatusCode, meta.Header, []byte(ev.data))
 	}
 	out.Raw = json.RawMessage(ev.data)
