@@ -82,8 +82,12 @@ Run every command from the repository root. Steps 1 to 7 and 10 to 12 need no ne
     go run ./examples/chat       # Quantum computing leverages quantum mechanics...
                                  # (avelin-pro, 204 tokens)
     go run ./examples/stream     # Vendor-neutral
+                                 # (finish: stop, 8 characters of reasoning)
     go run ./examples/messages   # Here is a debounce helper...
                                  # (avelin-coding-fast, stop: end_turn, 228 tokens)
+    go run ./examples/chat-tools      # model called get_weather({"city": "Abu Dhabi"})
+                                      # It's 31°C and sunny in Abu Dhabi.
+    go run ./examples/messages-tools  # the same two lines, via the messages endpoint
     go run ./cmd/avelin-models   # the table from step 8, served from testdata
     unset AVELIN_BASE_URL AVELIN_API_KEY
     ```
@@ -103,11 +107,11 @@ Run every command from the repository root. Steps 1 to 7 and 10 to 12 need no ne
     Expect: no output. If AVELIN changed its catalog, `models_gen.go` and
     `testdata/public_models.json` show as modified together, and `go test ./...` still passes.
 
-13. Integration tests, only if you have a key. They make 7 small requests.
+13. Integration tests, only if you have a key. They make 9 small requests (about $0.002).
     ```sh
     unset AVELIN_BASE_URL
     AVELIN_API_KEY=sk-avelin-... go test -tags integration -run Integration -v .
     ```
-    Expect: 7 `--- PASS` lines. The logs print response headers and the real error body shape,
-    which show whether the assumptions in the README's Status section hold. Without a key all 7
+    Expect: 9 `--- PASS` lines. The logs print response headers and the real error body shape,
+    which show whether the assumptions in the README's Status section hold. Without a key all 9
     print `--- SKIP`.

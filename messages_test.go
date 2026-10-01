@@ -354,3 +354,129 @@ data: {"type":"message_stop"}
 		t.Fatalf("signature=%q tool=%q input=%q stop=%q tokens=%d err=%v", signature, toolName, input, stop, outputTokens, stream.Err())
 	}
 }
+
+func TestMessageAccumulate(t *testing.T) {
+	srv, _ := mockServer(t)
+	stream, err := newTestClient(srv).CreateMessageStream(context.Background(), MessageRequest{
+		Model: "avelin-coding-fast", MaxTokens: 1024, Messages: []MessageParam{{Role: "user", Content: "hi"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stream.Close()
+	var got Message
+	for stream.Next() {
+		if err := got.Accumulate(stream.Current()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := stream.Err(); err != nil {
+		t.Fatal(err)
+	}
+	want := Message{ID: "msg_...", Type: "message", Role: "assistant", Model: "avelin-coding-fast",
+		Content: []ContentBlock{
+			{Type: "thinking", Thinking: "The user wants"},
+			{Type: "text", Text: "Here is a debounce helper..."},
+		},
+		StopReason: "end_turn", Usage: MessageUsage{InputTokens: 18, OutputTokens: 210}}
+	if !reflect.DeepEqual(got, want) || got.Text() != "Here is a debounce helper..." {
+		t.Fatalf("accumulated:\n got %+v\nwant %+v", got, want)
+	}
+}
+
+// accumulateEvents feeds JSON events to a new Message.
+func accumulateEvents(t *testing.T, events ...string) (Message, error) {
+	t.Helper()
+	var m Message
+	for _, data := range events {
+		var ev MessageStreamEvent
+		if err := json.Unmarshal([]byte(data), &ev); err != nil {
+			t.Fatal(err)
+		}
+		if err := m.Accumulate(ev); err != nil {
+			return m, err
+		}
+	}
+	return m, nil
+}
+
+func TestMessageAccumulateToolUse(t *testing.T) {
+	msg, err := accumulateEvents(t,
+		`{"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}`,
+		`{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"Need the weather."}}`,
+		`{"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"sig123"}}`,
+		`{"type":"content_block_stop","index":0}`,
+		`{"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_1","name":"get_weather","input":{}}}`,
+		`{"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"city\": "}}`,
+		`{"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"\"Abu Dhabi\"}"}}`,
+		`{"type":"content_block_stop","index":1}`,
+		`{"type":"content_block_start","index":2,"content_block":{"type":"tool_use","id":"toolu_2","name":"get_time","input":{}}}`,
+		`{"type":"content_block_stop","index":2}`,
+		`{"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":20}}`,
+		`{"type":"message_stop"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if msg.StopReason != "tool_use" || msg.Usage.OutputTokens != 20 || len(msg.Content) != 3 {
+		t.Fatalf("message = %+v", msg)
+	}
+	thinking, weather, clock := msg.Content[0], msg.Content[1], msg.Content[2]
+	if thinking.Thinking != "Need the weather." || thinking.Signature != "sig123" {
+		t.Errorf("thinking block = %+v", thinking)
+	}
+	if weather.ID != "toolu_1" || weather.Name != "get_weather" || string(weather.Input) != `{"city": "Abu Dhabi"}` {
+		t.Errorf("tool_use block = %+v (input %s)", weather, weather.Input)
+	}
+	if string(clock.Input) != "{}" {
+		t.Errorf("tool_use without arguments has input %s, want {}", clock.Input)
+	}
+	if _, err := json.Marshal(MessageParam{Role: "assistant", Blocks: msg.Content}); err != nil {
+		t.Errorf("accumulated content cannot be sent back: %v", err)
+	}
+}
+
+func TestMessageAccumulateErrors(t *testing.T) {
+	for name, event := range map[string]string{
+		"delta before start":  `{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"x"}}`,
+		"stop before start":   `{"type":"content_block_stop","index":0}`,
+		"start skips ahead":   `{"type":"content_block_start","index":2,"content_block":{"type":"text","text":""}}`,
+		"start without block": `{"type":"content_block_start","index":0}`,
+	} {
+		if _, err := accumulateEvents(t, event); err == nil {
+			t.Errorf("%s: no error", name)
+		}
+	}
+}
+
+// TestMessageToolRoundTripWithMock runs the flow from examples/messages-tools.
+func TestMessageToolRoundTripWithMock(t *testing.T) {
+	srv, rec := mockServer(t)
+	c := newTestClient(srv)
+	req := MessageRequest{Model: ModelAgenticPro, MaxTokens: 1024,
+		Messages: []MessageParam{{Role: "user", Content: "What's the weather in Abu Dhabi?"}},
+		Tools:    []MessageTool{{Name: "get_weather", InputSchema: map[string]any{"type": "object"}}}}
+	first, err := c.CreateMessage(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.StopReason != "tool_use" {
+		t.Fatalf("first reply = %+v", first)
+	}
+	block := first.Content[0]
+	req.Messages = append(req.Messages,
+		MessageParam{Role: "assistant", Blocks: first.Content},
+		MessageParam{Role: "user", Blocks: []ContentBlock{{Type: "tool_result", ToolUseID: block.ID, Content: `{"temp_c": 31}`}}})
+	second, err := c.CreateMessage(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.Text() != "It's 31°C and sunny in Abu Dhabi." || second.StopReason != "end_turn" {
+		t.Fatalf("final reply = %+v", second)
+	}
+	_, body := rec.last()
+	assertJSON(t, body, `{"model":"avelin-agentic-pro","max_tokens":1024,"messages":[
+		{"role":"user","content":"What's the weather in Abu Dhabi?"},
+		{"role":"assistant","content":[{"type":"tool_use","id":"toolu_abc123","name":"get_weather","input":{"city":"Abu Dhabi"}}]},
+		{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_abc123","content":"{\"temp_c\": 31}"}]}],
+		"tools":[{"name":"get_weather","input_schema":{"type":"object"}}]}`)
+}

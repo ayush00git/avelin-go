@@ -26,7 +26,8 @@ if err != nil {
 fmt.Println(resp.Choices[0].Message.Content)
 ```
 
-More in [examples/](examples): `chat`, `stream`, `messages`.
+More in [examples/](examples): `chat`, `stream`, `messages`, and tool calling in `chat-tools` and
+`messages-tools`.
 
 ## Supported endpoints
 
@@ -62,29 +63,31 @@ if err != nil {
 	log.Fatal(err)
 }
 defer stream.Close()
+var msg avelin.Message
 for stream.Next() {
-	if ev := stream.Current(); ev.Delta != nil {
+	ev := stream.Current()
+	if ev.Delta != nil {
 		fmt.Print(ev.Delta.Text)
+	}
+	if err := msg.Accumulate(ev); err != nil {
+		log.Fatal(err)
 	}
 }
 if err := stream.Err(); err != nil {
 	log.Fatal(err)
 }
+fmt.Println(msg.StopReason, msg.Usage.OutputTokens)
 ```
 
-A stream that ends before `[DONE]` or `message_stop` returns an error wrapping `io.ErrUnexpectedEOF`.
+`Message.Accumulate` and `ChatCompletion.Accumulate` build the full result from a stream, tool
+calls included, so it can be read or sent back as history. A stream that ends before `[DONE]` or
+`message_stop` returns an error wrapping `io.ErrUnexpectedEOF`.
 
 ## Errors and metadata
 
-Non-2xx responses return `*avelin.APIError` with `StatusCode`, `Type`, `Code`, `Message`,
-`RequestID`, `Header` and `Body`:
-
-```go
-var apiErr *avelin.APIError
-if errors.As(err, &apiErr) && apiErr.StatusCode == 429 {
-	fmt.Println(apiErr.Header.Get("X-RateLimit-Reset-Requests"))
-}
-```
+Non-2xx responses, and errors reported inside a stream, return `*avelin.APIError` (use
+`errors.As`) with `StatusCode`, `Type`, `Code`, `Message`, `RequestID`, `Body` and `Header`, which
+includes AVELIN's `X-RateLimit-*` headers.
 
 Every value a method returns carries `Meta` (HTTP status and headers) and `Raw` (the full JSON
 body), so headers and fields this package does not model are still reachable. Streams expose
@@ -92,17 +95,15 @@ body), so headers and fields this package does not model are still reachable. St
 
 ## Model IDs
 
-`models_gen.go` holds one constant per model in the public catalog (`ModelFast`, `ModelPro`,
-`ModelUltra`, `ModelCodingFast` ... `ModelAgenticUltra`). Refresh it with `go generate ./...`.
-`ModelBGEM3` is the documented embeddings model. Legacy names such as `"avelin-coding"` work as
-plain strings.
+`models_gen.go` has a constant per model in the public catalog (`ModelFast` ... `ModelAgenticUltra`);
+refresh it with `go generate ./...`. `ModelBGEM3` is the embeddings model. Legacy names such as
+`"avelin-coding"` work as plain strings.
 
 ## Tools
 
 - `go run ./cmd/avelin-models` prints the live public catalog (id, family, context, $/1M tokens). No key needed.
 - `go run ./cmd/mockserver` serves the `testdata/` fixtures on `127.0.0.1:8089` for trying the examples offline.
-
-See [VERIFY.md](VERIFY.md) for step-by-step checks.
+- [VERIFY.md](VERIFY.md) has step-by-step checks.
 
 ## Not yet
 

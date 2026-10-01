@@ -129,6 +129,77 @@ type ChatChunkChoice struct {
 	FinishReason string      `json:"finish_reason"`
 }
 
+// Accumulate adds a stream chunk to c, so that after the last chunk c holds
+// the whole completion. Content, reasoning and tool call arguments are
+// concatenated per choice, and tool calls get a nil Index, so a message can
+// be sent back as history as it is. Usage stays zero: AVELIN does not
+// document usage in streams. It returns an error if a chunk refers to a
+// choice or tool call more than one past the last one started.
+func (c *ChatCompletion) Accumulate(chunk ChatCompletionChunk) error {
+	if chunk.ID != "" {
+		c.ID = chunk.ID
+	}
+	c.Object = "chat.completion"
+	if chunk.Created != 0 {
+		c.Created = chunk.Created
+	}
+	if chunk.Model != "" {
+		c.Model = chunk.Model
+	}
+	for _, delta := range chunk.Choices {
+		if delta.Index < 0 || delta.Index > len(c.Choices) {
+			return fmt.Errorf("avelin: chunk for choice %d, but %d choices have started", delta.Index, len(c.Choices))
+		}
+		if delta.Index == len(c.Choices) {
+			c.Choices = append(c.Choices, ChatChoice{Index: delta.Index})
+		}
+		choice := &c.Choices[delta.Index]
+		if delta.Delta.Role != "" {
+			choice.Message.Role = delta.Delta.Role
+		}
+		choice.Message.Content += delta.Delta.Content
+		choice.Message.ReasoningContent += delta.Delta.ReasoningContent
+		if delta.FinishReason != "" {
+			choice.FinishReason = delta.FinishReason
+		}
+		for _, fragment := range delta.Delta.ToolCalls {
+			if err := accumulateToolCall(&choice.Message.ToolCalls, fragment); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// accumulateToolCall merges a streamed tool call fragment into calls, finding
+// its call by Index or, when the server sends no index, by ID.
+func accumulateToolCall(calls *[]ToolCall, fragment ToolCall) error {
+	i := len(*calls) - 1 // without an index or a new ID, continue the last call
+	if fragment.Index != nil {
+		i = *fragment.Index
+	} else if i < 0 || (fragment.ID != "" && fragment.ID != (*calls)[i].ID) {
+		i = len(*calls)
+	}
+	if i < 0 || i > len(*calls) {
+		return fmt.Errorf("avelin: tool call fragment for call %d, but %d calls have started", i, len(*calls))
+	}
+	if i == len(*calls) {
+		*calls = append(*calls, ToolCall{})
+	}
+	call := &(*calls)[i]
+	if fragment.ID != "" {
+		call.ID = fragment.ID
+	}
+	if fragment.Type != "" {
+		call.Type = fragment.Type
+	}
+	if fragment.Function.Name != "" {
+		call.Function.Name = fragment.Function.Name
+	}
+	call.Function.Arguments += fragment.Function.Arguments
+	return nil
+}
+
 // Ptr returns a pointer to v, for optional request fields such as
 // Temperature.
 func Ptr[T any](v T) *T {

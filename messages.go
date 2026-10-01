@@ -144,6 +144,73 @@ func (m *Message) Text() string {
 	return b.String()
 }
 
+// Accumulate adds a stream event to m, so that after message_stop m holds
+// the whole message, as CreateMessage would return it. Text, thinking and
+// signatures are concatenated per block, and a tool_use block's Input is
+// assembled from its input_json_delta fragments; it is valid JSON once the
+// block's content_block_stop has arrived. It returns an error for a delta or
+// stop event whose block has not started.
+func (m *Message) Accumulate(ev MessageStreamEvent) error {
+	switch ev.Type {
+	case "message_start":
+		if ev.Message != nil {
+			*m = *ev.Message
+		}
+	case "content_block_start":
+		if ev.ContentBlock == nil || ev.Index < 0 || ev.Index > len(m.Content) {
+			return fmt.Errorf("avelin: content_block_start for block %d, but %d blocks have started", ev.Index, len(m.Content))
+		}
+		block := *ev.ContentBlock
+		if block.Type == "tool_use" && isEmptyObject(block.Input) {
+			block.Input = nil // rebuilt from the input_json_delta fragments
+		}
+		if ev.Index == len(m.Content) {
+			m.Content = append(m.Content, block)
+		} else {
+			m.Content[ev.Index] = block
+		}
+	case "content_block_delta":
+		block, err := m.startedBlock(ev)
+		if err != nil || ev.Delta == nil {
+			return err
+		}
+		block.Text += ev.Delta.Text
+		block.Thinking += ev.Delta.Thinking
+		block.Signature += ev.Delta.Signature
+		block.Input = append(block.Input, ev.Delta.PartialJSON...)
+	case "content_block_stop":
+		block, err := m.startedBlock(ev)
+		if err != nil {
+			return err
+		}
+		if block.Type == "tool_use" && len(block.Input) == 0 {
+			block.Input = json.RawMessage("{}")
+		}
+	case "message_delta":
+		if ev.Delta != nil && ev.Delta.StopReason != "" {
+			m.StopReason = ev.Delta.StopReason
+		}
+		if u := ev.Usage; u != nil {
+			m.Usage.InputTokens = max(m.Usage.InputTokens, u.InputTokens)
+			m.Usage.OutputTokens = max(m.Usage.OutputTokens, u.OutputTokens)
+			m.Usage.TotalTokens = max(m.Usage.TotalTokens, u.TotalTokens)
+		}
+	}
+	return nil
+}
+
+func (m *Message) startedBlock(ev MessageStreamEvent) (*ContentBlock, error) {
+	if ev.Index < 0 || ev.Index >= len(m.Content) {
+		return nil, fmt.Errorf("avelin: %s for block %d, but %d blocks have started", ev.Type, ev.Index, len(m.Content))
+	}
+	return &m.Content[ev.Index], nil
+}
+
+func isEmptyObject(raw json.RawMessage) bool {
+	var obj map[string]json.RawMessage
+	return json.Unmarshal(raw, &obj) == nil && obj != nil && len(obj) == 0
+}
+
 // MessageUsage reports token counts. TotalTokens is an AVELIN addition to
 // the Anthropic format.
 type MessageUsage struct {

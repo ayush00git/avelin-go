@@ -49,11 +49,16 @@ func requireAuth(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
+// chat answers a request that offers tools with a tool call, and the
+// follow-up that carries the tool result with a final answer.
 func (s *server) chat(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Model    string            `json:"model"`
-		Messages []json.RawMessage `json:"messages"`
-		Stream   bool              `json:"stream"`
+		Model    string `json:"model"`
+		Messages []struct {
+			Role string `json:"role"`
+		} `json:"messages"`
+		Tools  []json.RawMessage `json:"tools"`
+		Stream bool              `json:"stream"`
 	}
 	if !decode(w, r, &req) {
 		return
@@ -62,19 +67,29 @@ func (s *server) chat(w http.ResponseWriter, r *http.Request) {
 		badRequest(w, "model and messages are required")
 		return
 	}
-	if req.Stream {
+	switch {
+	case req.Stream:
 		s.stream(w, "chat_stream.txt")
-		return
+	case len(req.Tools) > 0 && req.Messages[len(req.Messages)-1].Role == "tool":
+		s.file(w, "chat_completion_after_tool.json")
+	case len(req.Tools) > 0:
+		s.file(w, "chat_completion_tool_call.json")
+	default:
+		s.file(w, "chat_completion.json")
 	}
-	s.file(w, "chat_completion.json")
 }
 
+// messages answers like chat: a tool_use when tools are offered, then a final
+// answer once the last message carries a tool_result.
 func (s *server) messages(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Model     string            `json:"model"`
-		MaxTokens int               `json:"max_tokens"`
-		Messages  []json.RawMessage `json:"messages"`
-		Stream    bool              `json:"stream"`
+		Model     string `json:"model"`
+		MaxTokens int    `json:"max_tokens"`
+		Messages  []struct {
+			Content json.RawMessage `json:"content"`
+		} `json:"messages"`
+		Tools  []json.RawMessage `json:"tools"`
+		Stream bool              `json:"stream"`
 	}
 	if !decode(w, r, &req) {
 		return
@@ -83,11 +98,17 @@ func (s *server) messages(w http.ResponseWriter, r *http.Request) {
 		badRequest(w, "model, max_tokens and messages are required")
 		return
 	}
-	if req.Stream {
+	last := req.Messages[len(req.Messages)-1].Content
+	switch {
+	case req.Stream:
 		s.stream(w, "messages_stream.txt")
-		return
+	case len(req.Tools) > 0 && strings.Contains(string(last), `"tool_result"`):
+		s.file(w, "message_after_tool.json")
+	case len(req.Tools) > 0:
+		s.file(w, "message_tool_use.json")
+	default:
+		s.file(w, "message.json")
 	}
-	s.file(w, "message.json")
 }
 
 func (s *server) embeddings(w http.ResponseWriter, r *http.Request) {

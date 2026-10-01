@@ -1,0 +1,21 @@
+{
+  "id": "chatcmpl-def456",
+  "object": "chat.completion",
+  "created": 1704067260,
+  "model": "avelin-agentic-pro",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "It's 31°C and sunny in Abu Dhabi."
+      },
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 96,
+    "completion_tokens": 12,
+    "total_tokens": 108
+  }
+}

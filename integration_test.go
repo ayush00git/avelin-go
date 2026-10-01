@@ -8,6 +8,7 @@ package avelin_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"testing"
@@ -69,20 +70,21 @@ func TestIntegrationChatStream(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer stream.Close()
-	chunks, content := 0, ""
+	var completion avelin.ChatCompletion
+	chunks := 0
 	for stream.Next() {
 		chunks++
-		for _, choice := range stream.Current().Choices {
-			content += choice.Delta.Content
+		if err := completion.Accumulate(stream.Current()); err != nil {
+			t.Fatal(err)
 		}
 	}
 	if err := stream.Err(); err != nil {
 		t.Fatal(err)
 	}
-	if chunks == 0 {
-		t.Fatal("no chunks")
+	if chunks == 0 || len(completion.Choices) == 0 || completion.Choices[0].FinishReason == "" {
+		t.Fatalf("incomplete stream: %d chunks, accumulated %+v", chunks, completion)
 	}
-	t.Logf("%d chunks, content=%q", chunks, content)
+	t.Logf("%d chunks, content=%q finish=%s", chunks, completion.Choices[0].Message.Content, completion.Choices[0].FinishReason)
 }
 
 func TestIntegrationMessages(t *testing.T) {
@@ -113,16 +115,70 @@ func TestIntegrationMessagesStream(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer stream.Close()
+	var msg avelin.Message
 	var last string
 	for stream.Next() {
 		last = stream.Current().Type
+		if err := msg.Accumulate(stream.Current()); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if err := stream.Err(); err != nil {
 		t.Fatal(err)
 	}
-	if last != "message_stop" {
-		t.Fatalf("last event %q, want message_stop", last)
+	if last != "message_stop" || len(msg.Content) == 0 || msg.StopReason == "" {
+		t.Fatalf("last event %q, accumulated %+v", last, msg)
 	}
+	t.Logf("text=%q stop=%s usage=%+v", msg.Text(), msg.StopReason, msg.Usage)
+}
+
+const weatherSchema = `{"type":"object","properties":{"city":{"type":"string"}},"required":["city"]}`
+
+func TestIntegrationChatTools(t *testing.T) {
+	c, ctx := integrationClient(t)
+	resp, err := c.CreateChatCompletion(ctx, avelin.ChatCompletionRequest{
+		Model:     avelin.ModelAgenticFast,
+		MaxTokens: 512,
+		Messages:  []avelin.ChatMessage{{Role: "user", Content: "What's the weather in Abu Dhabi? Use the get_weather tool."}},
+		Tools: []avelin.Tool{{Type: "function", Function: avelin.FunctionDefinition{
+			Name: "get_weather", Description: "Get current weather for a city", Parameters: json.RawMessage(weatherSchema)}}},
+		ToolChoice: "auto",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	choice := resp.Choices[0]
+	if len(choice.Message.ToolCalls) == 0 {
+		t.Fatalf("no tool call: finish=%s content=%q", choice.FinishReason, choice.Message.Content)
+	}
+	call := choice.Message.ToolCalls[0]
+	if call.ID == "" || call.Function.Name != "get_weather" || !json.Valid([]byte(call.Function.Arguments)) {
+		t.Fatalf("tool call = %+v", call)
+	}
+	t.Logf("tool call %s(%s), finish=%s", call.Function.Name, call.Function.Arguments, choice.FinishReason)
+}
+
+func TestIntegrationMessagesTools(t *testing.T) {
+	c, ctx := integrationClient(t)
+	msg, err := c.CreateMessage(ctx, avelin.MessageRequest{
+		Model:     avelin.ModelAgenticFast,
+		MaxTokens: 512,
+		Messages:  []avelin.MessageParam{{Role: "user", Content: "What's the weather in Abu Dhabi? Use the get_weather tool."}},
+		Tools:     []avelin.MessageTool{{Name: "get_weather", Description: "Get current weather for a city", InputSchema: json.RawMessage(weatherSchema)}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, block := range msg.Content {
+		if block.Type == "tool_use" {
+			if block.ID == "" || block.Name != "get_weather" || !json.Valid(block.Input) {
+				t.Fatalf("tool_use block = %+v", block)
+			}
+			t.Logf("tool_use %s(%s), stop=%s", block.Name, block.Input, msg.StopReason)
+			return
+		}
+	}
+	t.Fatalf("no tool_use block: stop=%s text=%q", msg.StopReason, msg.Text())
 }
 
 func TestIntegrationEmbeddings(t *testing.T) {
