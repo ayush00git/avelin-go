@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -401,4 +402,113 @@ data: [DONE]
 	if stream.Err() != nil || id != "call_abc123" || name != "get_weather" || args != `{"city": "Abu Dhabi"}` || finish != "tool_calls" {
 		t.Fatalf("id=%q name=%q args=%q finish=%q err=%v", id, name, args, finish, stream.Err())
 	}
+}
+
+func TestChatCompletionAccumulate(t *testing.T) {
+	srv, _ := mockServer(t)
+	stream, err := newTestClient(srv).CreateChatCompletionStream(context.Background(), ChatCompletionRequest{Model: "avelin-pro", Messages: userMessage("hi")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stream.Close()
+	var got ChatCompletion
+	for stream.Next() {
+		if err := got.Accumulate(stream.Current()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := stream.Err(); err != nil {
+		t.Fatal(err)
+	}
+	want := ChatCompletion{ID: "chatcmpl-...", Object: "chat.completion", Created: 1704067200, Model: "avelin-pro",
+		Choices: []ChatChoice{{Message: ChatMessage{Role: "assistant", Content: "Vendor-neutral", ReasoningContent: "The user"}, FinishReason: "stop"}}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("accumulated:\n got %+v\nwant %+v", got, want)
+	}
+}
+
+// accumulateChunks feeds JSON chunks to a new ChatCompletion.
+func accumulateChunks(t *testing.T, chunks ...string) (ChatCompletion, error) {
+	t.Helper()
+	var c ChatCompletion
+	for _, data := range chunks {
+		var chunk ChatCompletionChunk
+		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
+			t.Fatal(err)
+		}
+		if err := c.Accumulate(chunk); err != nil {
+			return c, err
+		}
+	}
+	return c, nil
+}
+
+func TestChatCompletionAccumulateToolCalls(t *testing.T) {
+	parallel, err := accumulateChunks(t,
+		`{"choices":[{"index":0,"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"call_a","type":"function","function":{"name":"get_weather","arguments":"{\"city\":"}}]}}]}`,
+		`{"choices":[{"index":0,"delta":{"tool_calls":[{"index":1,"id":"call_b","type":"function","function":{"name":"get_time","arguments":"{}"}}]}}]}`,
+		`{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"Dubai\"}"}}]},"finish_reason":"tool_calls"}]}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []ToolCall{
+		{ID: "call_a", Type: "function", Function: FunctionCall{Name: "get_weather", Arguments: `{"city":"Dubai"}`}},
+		{ID: "call_b", Type: "function", Function: FunctionCall{Name: "get_time", Arguments: "{}"}},
+	}
+	if got := parallel.Choices[0].Message.ToolCalls; !reflect.DeepEqual(got, want) || parallel.Choices[0].FinishReason != "tool_calls" {
+		t.Fatalf("parallel calls:\n got %+v\nwant %+v", got, want)
+	}
+
+	noIndex, err := accumulateChunks(t,
+		`{"choices":[{"delta":{"tool_calls":[{"id":"call_a","type":"function","function":{"name":"get_weather","arguments":"{\"city\":"}}]}}]}`,
+		`{"choices":[{"delta":{"tool_calls":[{"function":{"arguments":"\"Dubai\"}"}}]}}]}`,
+		`{"choices":[{"delta":{"tool_calls":[{"id":"call_b","type":"function","function":{"name":"get_time","arguments":"{}"}}]}}]}`)
+	if got := noIndex.Choices[0].Message.ToolCalls; err != nil || !reflect.DeepEqual(got, want) {
+		t.Fatalf("calls without index (err %v):\n got %+v\nwant %+v", err, got, want)
+	}
+}
+
+func TestChatCompletionAccumulateChoicesAndErrors(t *testing.T) {
+	two, err := accumulateChunks(t,
+		`{"choices":[{"index":0,"delta":{"content":"A"}},{"index":1,"delta":{"content":"B"}}]}`,
+		`{"choices":[{"index":1,"delta":{"content":"2"}},{"index":0,"delta":{"content":"1"}}]}`)
+	if err != nil || len(two.Choices) != 2 || two.Choices[0].Message.Content != "A1" || two.Choices[1].Message.Content != "B2" || two.Choices[1].Index != 1 {
+		t.Fatalf("choices = %+v, err = %v", two.Choices, err)
+	}
+	for name, chunk := range map[string]string{
+		"choice skips ahead":    `{"choices":[{"index":2,"delta":{"content":"x"}}]}`,
+		"tool call skips ahead": `{"choices":[{"index":0,"delta":{"tool_calls":[{"index":3,"function":{"arguments":"{}"}}]}}]}`,
+		"negative tool index":   `{"choices":[{"index":0,"delta":{"tool_calls":[{"index":-1,"function":{"arguments":"{}"}}]}}]}`,
+	} {
+		if _, err := accumulateChunks(t, chunk); err == nil {
+			t.Errorf("%s: no error", name)
+		}
+	}
+}
+
+// TestChatToolRoundTripWithMock runs the flow from examples/chat-tools.
+func TestChatToolRoundTripWithMock(t *testing.T) {
+	srv, rec := mockServer(t)
+	c := newTestClient(srv)
+	req := ChatCompletionRequest{Model: ModelAgenticPro, Messages: userMessage("What's the weather in Abu Dhabi?"),
+		Tools: []Tool{{Type: "function", Function: FunctionDefinition{Name: "get_weather"}}}}
+	first, err := c.CreateChatCompletion(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	call := first.Choices[0].Message.ToolCalls[0]
+	req.Messages = append(req.Messages, first.Choices[0].Message, ChatMessage{Role: "tool", ToolCallID: call.ID, Content: `{"temp_c": 31}`})
+	second, err := c.CreateChatCompletion(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := second.Choices[0].Message.Content; got != "It's 31°C and sunny in Abu Dhabi." {
+		t.Fatalf("final answer = %q", got)
+	}
+	_, body := rec.last()
+	assertJSON(t, body, `{"model":"avelin-agentic-pro","messages":[
+		{"role":"user","content":"What's the weather in Abu Dhabi?"},
+		{"role":"assistant","content":"","tool_calls":[{"id":"call_abc123","type":"function","function":{"name":"get_weather","arguments":"{\"city\": \"Abu Dhabi\"}"}}]},
+		{"role":"tool","content":"{\"temp_c\": 31}","tool_call_id":"call_abc123"}],
+		"tools":[{"type":"function","function":{"name":"get_weather"}}]}`)
 }

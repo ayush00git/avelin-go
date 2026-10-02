@@ -1,0 +1,15 @@
+{
+  "id": "msg_def456",
+  "type": "message",
+  "role": "assistant",
+  "model": "avelin-agentic-pro",
+  "content": [
+    {"type": "text", "text": "It's 31°C and sunny in Abu Dhabi."}
+  ],
+  "stop_reason": "end_turn",
+  "usage": {
+    "input_tokens": 96,
+    "output_tokens": 12,
+    "total_tokens": 108
+  }
+}
