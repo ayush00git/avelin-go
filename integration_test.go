@@ -140,7 +140,7 @@ const weatherSchema = `{"type":"object","properties":{"city":{"type":"string"}},
 func TestIntegrationChatTools(t *testing.T) {
 	c, ctx := integrationClient(t)
 	resp, err := c.CreateChatCompletion(ctx, avelin.ChatCompletionRequest{
-		Model:     avelin.ModelAgenticFast,
+		Model:     avelin.ModelFast,
 		MaxTokens: 512,
 		Messages:  []avelin.ChatMessage{{Role: "user", Content: "What's the weather in Abu Dhabi? Use the get_weather tool."}},
 		Tools: []avelin.Tool{{Type: "function", Function: avelin.FunctionDefinition{
@@ -164,7 +164,7 @@ func TestIntegrationChatTools(t *testing.T) {
 func TestIntegrationMessagesTools(t *testing.T) {
 	c, ctx := integrationClient(t)
 	msg, err := c.CreateMessage(ctx, avelin.MessageRequest{
-		Model:     avelin.ModelAgenticFast,
+		Model:     avelin.ModelFast,
 		MaxTokens: 512,
 		Messages:  []avelin.MessageParam{{Role: "user", Content: "What's the weather in Abu Dhabi? Use the get_weather tool."}},
 		Tools:     []avelin.MessageTool{{Name: "get_weather", Description: "Get current weather for a city", InputSchema: json.RawMessage(weatherSchema)}},
@@ -190,6 +190,10 @@ func TestIntegrationEmbeddings(t *testing.T) {
 		Model: avelin.ModelBGEM3,
 		Input: []string{"AVELIN is a sovereign AI platform.", "Second text."},
 	})
+	var apiErr *avelin.APIError
+	if errors.As(err, &apiErr) && apiErr.StatusCode == 403 {
+		t.Skip("this key cannot use bge-m3 (prepaid accounts have no access)")
+	}
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -269,5 +273,29 @@ func TestIntegrationToolChoice(t *testing.T) {
 			t.Errorf("%s: tool_use=%v, want %v (stop=%s)", name, called, tt.wantCall, msg.StopReason)
 		}
 		t.Logf("%s: tool_use=%v, stop=%s", name, called, msg.StopReason)
+	}
+}
+
+// TestIntegrationListedModels calls every model the key lists, with one
+// output token, and logs whether the canonical coding names also work.
+func TestIntegrationListedModels(t *testing.T) {
+	c, ctx := integrationClient(t)
+	list, err := c.ListModels(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	try := func(id avelin.ModelID) error {
+		_, err := c.CreateChatCompletion(ctx, avelin.ChatCompletionRequest{
+			Model: id, MaxTokens: 1, Messages: []avelin.ChatMessage{{Role: "user", Content: "Say ok."}},
+		})
+		return err
+	}
+	for _, m := range list.Data {
+		if err := try(avelin.ModelID(m.ID)); err != nil {
+			t.Errorf("listed model %s: %v", m.ID, err)
+		}
+	}
+	for _, id := range []avelin.ModelID{avelin.ModelCodingFast, avelin.ModelCodingUltra} {
+		t.Logf("canonical %s: %v", id, try(id))
 	}
 }
