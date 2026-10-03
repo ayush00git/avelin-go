@@ -2,7 +2,7 @@
   "id": "chatcmpl-def456",
   "object": "chat.completion",
   "created": 1704067260,
-  "model": "avelin-agentic-pro",
+  "model": "avelin-fast",
   "choices": [
     {
       "index": 0,
