@@ -21,7 +21,7 @@ func getWeather(city string) string {
 func main() {
 	client := avelin.NewClient()
 	req := avelin.MessageRequest{
-		Model:     avelin.ModelAgenticPro,
+		Model:     avelin.ModelFast,
 		MaxTokens: 1024,
 		Messages:  []avelin.MessageParam{{Role: "user", Content: "What's the weather in Abu Dhabi?"}},
 		Tools: []avelin.MessageTool{{Name: "get_weather", Description: "Get current weather for a city",

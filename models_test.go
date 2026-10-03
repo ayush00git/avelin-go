@@ -112,3 +112,19 @@ func TestUnknownRoute(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+// TestLegacyModelNames pins the legacy names from AVELIN's model catalog page
+// (https://avelin.ai/docs/models/README, "Legacy Model Names").
+func TestLegacyModelNames(t *testing.T) {
+	for got, want := range map[ModelID]ModelID{
+		ModelCoding:          "avelin-coding",
+		ModelCodingPlus:      "avelin-coding-plus",
+		ModelCodingArchitect: "avelin-coding-architect",
+		ModelAgentic:         "avelin-agentic",
+		ModelAgenticHigh:     "avelin-agentic-high",
+	} {
+		if got != want {
+			t.Errorf("legacy constant = %q, want %q", got, want)
+		}
+	}
+}

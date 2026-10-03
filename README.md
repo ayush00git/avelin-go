@@ -99,8 +99,10 @@ body), so headers and fields this package does not model are still reachable. St
 ## Model IDs
 
 `models_gen.go` has a constant per model in the public catalog (`ModelFast` ... `ModelAgenticUltra`);
-refresh it with `go generate ./...`. `ModelBGEM3` is the embeddings model. Legacy names such as
-`"avelin-coding"` work as plain strings.
+refresh it with `go generate ./...`. `ModelBGEM3` is the embeddings model. Keys created in AVELIN's
+dashboard use the legacy coding names: use `ModelCoding` and `ModelCodingArchitect`, since such keys
+reject `ModelCodingFast` and `ModelCodingUltra`. `ListModels` shows what a key can use; on prepaid
+accounts that excludes the agentic models and `bge-m3`.
 
 ## Tools
 
@@ -110,9 +112,8 @@ refresh it with `go generate ./...`. `ModelBGEM3` is the embeddings model. Legac
 
 ## Not yet
 
-- `/v1/audio/transcriptions`, `/v1/audio/speech`, `/v1/images/generations`
+- Audio (`/v1/audio/*`), images (`/v1/images/generations`), image input, base64 embeddings
 - `/v2` web endpoints (`scrape`, `search`, `map`, `crawl`, `extract`): AVELIN defers their schemas to Firecrawl's docs
-- Image input, embeddings `encoding_format: "base64"`
 
 ## Status
 

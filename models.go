@@ -9,9 +9,21 @@ import (
 //go:generate go run ./internal/genmodels -out models_gen.go -snapshot testdata/public_models.json
 
 // ModelID names a model, such as "avelin-pro". Constants for the public
-// catalog are generated into models_gen.go. Other names, including legacy
-// aliases such as "avelin-coding", can be used as plain strings.
+// catalog are generated into models_gen.go; the legacy names are below.
 type ModelID string
+
+// Legacy model names. AVELIN's docs call them aliases of the canonical names,
+// but keys created in AVELIN's dashboard are scoped by these names: such a
+// key accepts ModelCoding and ModelCodingArchitect and rejects
+// ModelCodingFast and ModelCodingUltra with 403. GET /v1/models lists the
+// names a key can use.
+const (
+	ModelCoding          ModelID = "avelin-coding"           // canonical: ModelCodingFast
+	ModelCodingPlus      ModelID = "avelin-coding-plus"      // canonical: ModelCodingPro
+	ModelCodingArchitect ModelID = "avelin-coding-architect" // canonical: ModelCodingUltra
+	ModelAgentic         ModelID = "avelin-agentic"          // canonical: ModelAgenticPro
+	ModelAgenticHigh     ModelID = "avelin-agentic-high"     // canonical: ModelAgenticUltra
+)
 
 // ModelList is the response of ListModels.
 type ModelList struct {
