@@ -27,7 +27,9 @@ fmt.Println(resp.Choices[0].Message.Content)
 ```
 
 More in [examples/](examples): `chat`, `stream`, `messages`, and tool calling in `chat-tools` and
-`messages-tools`.
+`messages-tools`. To force a tool, set `ToolChoice: avelin.ToolChoiceFunction{Name: "get_weather"}`
+(chat) or `ToolChoice: &avelin.MessageToolChoice{Type: "tool", Name: "get_weather"}` (messages),
+and clear it before sending the tool result.
 
 ## Supported endpoints
 
@@ -110,7 +112,7 @@ refresh it with `go generate ./...`. `ModelBGEM3` is the embeddings model. Legac
 
 - `/v1/audio/transcriptions`, `/v1/audio/speech`, `/v1/images/generations`
 - `/v2` web endpoints (`scrape`, `search`, `map`, `crawl`, `extract`): AVELIN defers their schemas to Firecrawl's docs
-- Image input, embeddings `encoding_format: "base64"`, forcing a specific tool with `tool_choice`
+- Image input, embeddings `encoding_format: "base64"`
 
 ## Status
 

@@ -214,3 +214,60 @@ func TestIntegrationErrorShape(t *testing.T) {
 	t.Logf("status=%d type=%q code=%q message=%q request id=%q body=%s",
 		apiErr.StatusCode, apiErr.Type, apiErr.Code, apiErr.Message, apiErr.RequestID, apiErr.Body)
 }
+
+// TestIntegrationToolChoice checks that each tool_choice form forces or
+// prevents a call, using a prompt that does not ask for the tool.
+func TestIntegrationToolChoice(t *testing.T) {
+	c, ctx := integrationClient(t)
+	chatTools := []avelin.Tool{{Type: "function", Function: avelin.FunctionDefinition{
+		Name: "get_weather", Description: "Get current weather for a city", Parameters: json.RawMessage(weatherSchema)}}}
+	for name, tt := range map[string]struct {
+		choice   any
+		wantCall bool
+	}{
+		"chat required": {"required", true},
+		"chat function": {avelin.ToolChoiceFunction{Name: "get_weather"}, true},
+		"chat none":     {"none", false},
+	} {
+		resp, err := c.CreateChatCompletion(ctx, avelin.ChatCompletionRequest{
+			Model: avelin.ModelFast, MaxTokens: 100, Tools: chatTools, ToolChoice: tt.choice,
+			Messages: []avelin.ChatMessage{{Role: "user", Content: "Hi there"}},
+		})
+		if err != nil {
+			t.Errorf("%s: %v", name, err)
+			continue
+		}
+		calls := resp.Choices[0].Message.ToolCalls
+		if (len(calls) > 0) != tt.wantCall {
+			t.Errorf("%s: %d tool calls, want call=%v (finish=%s)", name, len(calls), tt.wantCall, resp.Choices[0].FinishReason)
+		}
+		t.Logf("%s: %d calls, finish=%s", name, len(calls), resp.Choices[0].FinishReason)
+	}
+
+	messageTools := []avelin.MessageTool{{Name: "get_weather", Description: "Get current weather for a city", InputSchema: json.RawMessage(weatherSchema)}}
+	for name, tt := range map[string]struct {
+		choice   *avelin.MessageToolChoice
+		wantCall bool
+	}{
+		"messages any":  {&avelin.MessageToolChoice{Type: "any"}, true},
+		"messages tool": {&avelin.MessageToolChoice{Type: "tool", Name: "get_weather"}, true},
+		"messages none": {&avelin.MessageToolChoice{Type: "none"}, false},
+	} {
+		msg, err := c.CreateMessage(ctx, avelin.MessageRequest{
+			Model: avelin.ModelFast, MaxTokens: 100, Tools: messageTools, ToolChoice: tt.choice,
+			Messages: []avelin.MessageParam{{Role: "user", Content: "Hi there"}},
+		})
+		if err != nil {
+			t.Errorf("%s: %v", name, err)
+			continue
+		}
+		called := false
+		for _, block := range msg.Content {
+			called = called || block.Type == "tool_use"
+		}
+		if called != tt.wantCall {
+			t.Errorf("%s: tool_use=%v, want %v (stop=%s)", name, called, tt.wantCall, msg.StopReason)
+		}
+		t.Logf("%s: tool_use=%v, stop=%s", name, called, msg.StopReason)
+	}
+}

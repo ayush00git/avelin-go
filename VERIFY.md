@@ -107,11 +107,11 @@ Run every command from the repository root. Steps 1 to 7 and 10 to 12 need no ne
     Expect: no output. If AVELIN changed its catalog, `models_gen.go` and
     `testdata/public_models.json` show as modified together, and `go test ./...` still passes.
 
-13. Integration tests, only if you have a key. They make 9 small requests (about $0.002).
+13. Integration tests, only if you have a key. They make 15 small requests (about $0.003).
     ```sh
     unset AVELIN_BASE_URL
     AVELIN_API_KEY=sk-avelin-... go test -tags integration -run Integration -v .
     ```
-    Expect: 9 `--- PASS` lines. The logs print response headers and the real error body shape,
-    which show whether the assumptions in the README's Status section hold. Without a key all 9
+    Expect: 10 `--- PASS` lines. The logs print response headers and the real error body shape,
+    which show whether the assumptions in the README's Status section hold. Without a key all 10
     print `--- SKIP`.

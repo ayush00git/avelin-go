@@ -554,3 +554,22 @@ func TestMessageAccumulateCacheUsage(t *testing.T) {
 		t.Fatalf("usage = %+v, err = %v", msg.Usage, err)
 	}
 }
+
+func TestMessageToolChoiceJSON(t *testing.T) {
+	for _, tt := range []struct {
+		choice *MessageToolChoice
+		want   string
+	}{
+		{nil, ``},
+		{&MessageToolChoice{Type: "auto"}, `,"tool_choice":{"type":"auto"}`},
+		{&MessageToolChoice{Type: "any"}, `,"tool_choice":{"type":"any"}`},
+		{&MessageToolChoice{Type: "tool", Name: "get_weather"}, `,"tool_choice":{"type":"tool","name":"get_weather"}`},
+		{&MessageToolChoice{Type: "none"}, `,"tool_choice":{"type":"none"}`},
+	} {
+		data, err := json.Marshal(MessageRequest{Model: ModelFast, MaxTokens: 10, Messages: []MessageParam{{Role: "user", Content: "hi"}}, ToolChoice: tt.choice})
+		if err != nil {
+			t.Fatal(err)
+		}
+		assertJSON(t, data, `{"model":"avelin-fast","max_tokens":10,"messages":[{"role":"user","content":"hi"}]`+tt.want+`}`)
+	}
+}

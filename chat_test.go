@@ -567,3 +567,22 @@ func TestChatCompletionDropsStreamOptions(t *testing.T) {
 		t.Error("CreateChatCompletion changed the caller's request")
 	}
 }
+
+func TestChatToolChoiceJSON(t *testing.T) {
+	for _, tt := range []struct {
+		choice any
+		want   string
+	}{
+		{nil, ``},
+		{"auto", `,"tool_choice":"auto"`},
+		{"none", `,"tool_choice":"none"`},
+		{"required", `,"tool_choice":"required"`},
+		{ToolChoiceFunction{Name: "get_weather"}, `,"tool_choice":{"type":"function","function":{"name":"get_weather"}}`},
+	} {
+		data, err := json.Marshal(ChatCompletionRequest{Model: ModelFast, Messages: userMessage("hi"), ToolChoice: tt.choice})
+		if err != nil {
+			t.Fatal(err)
+		}
+		assertJSON(t, data, `{"model":"avelin-fast","messages":[{"role":"user","content":"hi"}]`+tt.want+`}`)
+	}
+}

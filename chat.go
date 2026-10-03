@@ -25,8 +25,10 @@ type ChatCompletionRequest struct {
 	PresencePenalty  *float64 `json:"presence_penalty,omitempty"`
 	FrequencyPenalty *float64 `json:"frequency_penalty,omitempty"`
 	Tools            []Tool   `json:"tools,omitempty"`
-	// ToolChoice is "auto" or "none".
-	ToolChoice string `json:"tool_choice,omitempty"`
+	// ToolChoice controls tool use: "auto", "none", "required" (call at
+	// least one tool), or a ToolChoiceFunction to force one function. A bare
+	// function name, which AVELIN's reference shows, is accepted but ignored.
+	ToolChoice any `json:"tool_choice,omitempty"`
 	// ReasoningEffort is "low", "medium" or "high" on models that reason.
 	// AVELIN documents only "high", but all three are accepted. Reasoning
 	// tokens count toward MaxTokens.
@@ -57,6 +59,25 @@ type ChatMessage struct {
 	ToolCalls        []ToolCall `json:"tool_calls,omitempty"`
 	// ToolCallID identifies the call a "tool" message answers.
 	ToolCallID string `json:"tool_call_id,omitempty"`
+}
+
+// ToolChoiceFunction forces a call to the named function when used as
+// ChatCompletionRequest.ToolChoice. AVELIN reports such a call with
+// FinishReason "stop", not "tool_calls". Clear ToolChoice before sending the
+// tool result, or the model is forced to call the function again.
+type ToolChoiceFunction struct {
+	Name string
+}
+
+// MarshalJSON encodes {"type":"function","function":{"name":...}}.
+func (f ToolChoiceFunction) MarshalJSON() ([]byte, error) {
+	type function struct {
+		Name string `json:"name"`
+	}
+	return json.Marshal(struct {
+		Type     string   `json:"type"`
+		Function function `json:"function"`
+	}{"function", function(f)})
 }
 
 // Tool is a function the model may call.
@@ -111,6 +132,8 @@ type ChatChoice struct {
 	Index   int         `json:"index"`
 	Message ChatMessage `json:"message"`
 	// FinishReason is "stop", "length", "tool_calls" or "content_filter".
+	// A forced tool call reports "stop", so check Message.ToolCalls rather
+	// than this field.
 	FinishReason string `json:"finish_reason"`
 }
 
