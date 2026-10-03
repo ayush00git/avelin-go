@@ -29,7 +29,7 @@ fmt.Println(resp.Choices[0].Message.Content)
 More in [examples/](examples): `chat`, `stream`, `messages`, and tool calling in `chat-tools` and
 `messages-tools`. To force a tool, set `ToolChoice: avelin.ToolChoiceFunction{Name: "get_weather"}`
 (chat) or `ToolChoice: &avelin.MessageToolChoice{Type: "tool", Name: "get_weather"}` (messages),
-and clear it before sending the tool result.
+and set it back to nil before sending the tool result.
 
 ## Supported endpoints
 
@@ -57,7 +57,7 @@ Every call takes a `context.Context`. A stream is never retried once it has star
 
 ```go
 stream, err := client.CreateMessageStream(ctx, avelin.MessageRequest{
-	Model:     avelin.ModelCodingFast,
+	Model:     avelin.ModelCoding,
 	MaxTokens: 1024,
 	Messages:  []avelin.MessageParam{{Role: "user", Content: "Write a debounce helper in Go."}},
 })

@@ -144,11 +144,11 @@ func TestCreateMessageRequiresMaxTokens(t *testing.T) {
 	defer srv.Close()
 	c := newTestClient(srv)
 	req := MessageRequest{Model: "avelin-pro", Messages: []MessageParam{{Role: "user", Content: "hi"}}}
-	if _, err := c.CreateMessage(context.Background(), req); err == nil || !strings.Contains(err.Error(), "MaxTokens") {
+	if _, err := c.CreateMessage(context.Background(), req); !errors.Is(err, ErrMaxTokens) {
 		t.Errorf("CreateMessage err = %v", err)
 	}
 	req.MaxTokens = -1
-	if _, err := c.CreateMessageStream(context.Background(), req); err == nil || !strings.Contains(err.Error(), "MaxTokens") {
+	if _, err := c.CreateMessageStream(context.Background(), req); !errors.Is(err, ErrMaxTokens) {
 		t.Errorf("CreateMessageStream err = %v", err)
 	}
 	if calls.Load() != 0 {
@@ -474,7 +474,7 @@ func TestMessageAccumulateErrors(t *testing.T) {
 func TestMessageToolRoundTripWithMock(t *testing.T) {
 	srv, rec := mockServer(t)
 	c := newTestClient(srv)
-	req := MessageRequest{Model: ModelAgenticPro, MaxTokens: 1024,
+	req := MessageRequest{Model: ModelFast, MaxTokens: 1024,
 		Messages: []MessageParam{{Role: "user", Content: "What's the weather in Abu Dhabi?"}},
 		Tools:    []MessageTool{{Name: "get_weather", InputSchema: map[string]any{"type": "object"}}}}
 	first, err := c.CreateMessage(context.Background(), req)
@@ -496,17 +496,17 @@ func TestMessageToolRoundTripWithMock(t *testing.T) {
 		t.Fatalf("final reply = %+v", second)
 	}
 	_, body := rec.last()
-	assertJSON(t, body, `{"model":"avelin-agentic-pro","max_tokens":1024,"messages":[
+	assertJSON(t, body, `{"model":"avelin-fast","max_tokens":1024,"messages":[
 		{"role":"user","content":"What's the weather in Abu Dhabi?"},
 		{"role":"assistant","content":[{"type":"tool_use","id":"toolu_abc123","name":"get_weather","input":{"city":"Abu Dhabi"}}]},
 		{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_abc123","content":"{\"temp_c\": 31}"}]}],
 		"tools":[{"name":"get_weather","input_schema":{"type":"object"}}]}`)
 }
 
-// TestLiveMessageResponses decodes responses captured from the live API on
+// TestCapturedMessageResponses decodes responses captured from the live API on
 // 2026-10-03: an empty thinking block, no total_tokens, a stream that starts
 // with ping and mixes "data:" and "data: ".
-func TestLiveMessageResponses(t *testing.T) {
+func TestCapturedMessageResponses(t *testing.T) {
 	srv := httptest.NewServer(status(200, string(fixture(t, "live_message.json"))))
 	defer srv.Close()
 	msg, err := newTestClient(srv).CreateMessage(context.Background(), MessageRequest{Model: ModelPro, MaxTokens: 300, Messages: []MessageParam{{Role: "user", Content: "Is 91 prime?"}}})

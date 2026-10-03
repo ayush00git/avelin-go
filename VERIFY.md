@@ -1,6 +1,6 @@
 # VERIFY
 
-Run every command from the repository root. Steps 1 to 7 and 10 to 12 need no network.
+Run every command from the repository root. Steps 1 to 6, 10 and 11 need no network.
 
 1. Build.
    ```sh
@@ -92,7 +92,8 @@ Run every command from the repository root. Steps 1 to 7 and 10 to 12 need no ne
     unset AVELIN_BASE_URL AVELIN_API_KEY
     ```
     Terminal 1 logs each request, for example `POST /v1/chat/completions`. Stop it with Ctrl+C.
-    The replies are the example responses from AVELIN's API reference, stored in `testdata/`.
+    The replies are the example responses from AVELIN's API reference, stored in `testdata/`; the mock
+    answers with the model name in its fixture, whichever model the example asks for.
 
 11. Missing key fails fast without sending a request.
     ```sh
@@ -108,11 +109,12 @@ Run every command from the repository root. Steps 1 to 7 and 10 to 12 need no ne
     `testdata/public_models.json` show as modified together, and `go test ./...` still passes.
 
 13. Integration tests, only if you have a key. They make about 23 small requests (under $0.01).
+    Keep the key in a file outside the repository, for example `~/.config/avelin/key` (mode 600), so it
+    stays out of your shell history:
     ```sh
     unset AVELIN_BASE_URL
-    AVELIN_API_KEY=sk-avelin-... go test -tags integration -run Integration -v .
+    AVELIN_API_KEY=$(cat ~/.config/avelin/key) go test -tags integration -run Integration -v .
     ```
     Expect: 11 `--- PASS` lines, or 10 and `--- SKIP: TestIntegrationEmbeddings` when the key cannot
-    use `bge-m3` (prepaid accounts). The logs print response headers and the real error body shape,
-    which show whether the assumptions in the README's Status section hold. Without a key all 11
-    print `--- SKIP`.
+    use `bge-m3` (prepaid accounts). The logs show request IDs, token usage, tool calls and the real
+    error body. Without a key all 11 print `--- SKIP`.

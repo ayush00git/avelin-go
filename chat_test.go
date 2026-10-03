@@ -490,7 +490,7 @@ func TestChatCompletionAccumulateChoicesAndErrors(t *testing.T) {
 func TestChatToolRoundTripWithMock(t *testing.T) {
 	srv, rec := mockServer(t)
 	c := newTestClient(srv)
-	req := ChatCompletionRequest{Model: ModelAgenticPro, Messages: userMessage("What's the weather in Abu Dhabi?"),
+	req := ChatCompletionRequest{Model: ModelFast, Messages: userMessage("What's the weather in Abu Dhabi?"),
 		Tools: []Tool{{Type: "function", Function: FunctionDefinition{Name: "get_weather"}}}}
 	first, err := c.CreateChatCompletion(context.Background(), req)
 	if err != nil {
@@ -506,16 +506,16 @@ func TestChatToolRoundTripWithMock(t *testing.T) {
 		t.Fatalf("final answer = %q", got)
 	}
 	_, body := rec.last()
-	assertJSON(t, body, `{"model":"avelin-agentic-pro","messages":[
+	assertJSON(t, body, `{"model":"avelin-fast","messages":[
 		{"role":"user","content":"What's the weather in Abu Dhabi?"},
 		{"role":"assistant","content":"","tool_calls":[{"id":"call_abc123","type":"function","function":{"name":"get_weather","arguments":"{\"city\": \"Abu Dhabi\"}"}}]},
 		{"role":"tool","content":"{\"temp_c\": 31}","tool_call_id":"call_abc123"}],
 		"tools":[{"type":"function","function":{"name":"get_weather"}}]}`)
 }
 
-// TestLiveChatCompletion decodes a response captured from the live API on
+// TestCapturedChatCompletion decodes a response captured from the live API on
 // 2026-10-03, including the usage fields AVELIN does not document.
-func TestLiveChatCompletion(t *testing.T) {
+func TestCapturedChatCompletion(t *testing.T) {
 	srv := httptest.NewServer(status(200, string(fixture(t, "live_chat_completion.json")), "X-Avelin-Request-Id", "8c54253d-a956-45d8-b4fa-cf46d80eee32"))
 	defer srv.Close()
 	resp, err := newTestClient(srv).CreateChatCompletion(context.Background(), ChatCompletionRequest{Model: ModelFast, Messages: userMessage("Say hi in two words.")})
@@ -548,7 +548,8 @@ func TestChatStreamIncludeUsage(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if stream.Err() != nil || completion.Choices[0].Message.Content != "Hello there" || completion.Usage.TotalTokens != 144 || completion.Usage.PromptTokens != 142 {
+	if stream.Err() != nil || completion.Choices[0].Message.Content != "Hello there" || completion.Choices[0].FinishReason != "stop" ||
+		completion.Usage.TotalTokens != 144 || completion.Usage.PromptTokens != 142 {
 		t.Fatalf("err=%v content=%q usage=%+v", stream.Err(), completion.Choices[0].Message.Content, completion.Usage)
 	}
 	_, body := rec.last()
@@ -585,4 +586,24 @@ func TestChatToolChoiceJSON(t *testing.T) {
 		}
 		assertJSON(t, data, `{"model":"avelin-fast","messages":[{"role":"user","content":"hi"}]`+tt.want+`}`)
 	}
+}
+
+// TestEmptyToolChoiceNotSent checks that ToolChoice "" is left out of the
+// request, so clearing it with "" works like nil.
+func TestEmptyToolChoiceNotSent(t *testing.T) {
+	srv, rec := mockServer(t)
+	c := newTestClient(srv)
+	req := ChatCompletionRequest{Model: ModelFast, Messages: userMessage("hi"), ToolChoice: ""}
+	if _, err := c.CreateChatCompletion(context.Background(), req); err != nil {
+		t.Fatal(err)
+	}
+	_, body := rec.last()
+	assertJSON(t, body, `{"model":"avelin-fast","messages":[{"role":"user","content":"hi"}]}`)
+	stream, err := c.CreateChatCompletionStream(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stream.Close()
+	_, body = rec.last()
+	assertJSON(t, body, `{"model":"avelin-fast","messages":[{"role":"user","content":"hi"}],"stream":true}`)
 }

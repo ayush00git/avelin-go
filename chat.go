@@ -26,8 +26,9 @@ type ChatCompletionRequest struct {
 	FrequencyPenalty *float64 `json:"frequency_penalty,omitempty"`
 	Tools            []Tool   `json:"tools,omitempty"`
 	// ToolChoice controls tool use: "auto", "none", "required" (call at
-	// least one tool), or a ToolChoiceFunction to force one function. A bare
-	// function name, which AVELIN's reference shows, is accepted but ignored.
+	// least one tool), or a ToolChoiceFunction to force one function; nil or
+	// "" leaves it to the server. A bare function name, which AVELIN's
+	// reference shows, is accepted but ignored.
 	ToolChoice any `json:"tool_choice,omitempty"`
 	// ReasoningEffort is "low", "medium" or "high" on models that reason.
 	// AVELIN documents only "high", but all three are accepted. Reasoning
@@ -46,9 +47,9 @@ type StreamOptions struct {
 }
 
 // ChatMessage is one message of a conversation. In a response it is the
-// generated message; in a stream chunk it is the incremental delta. When a
-// response message is sent back as history, ReasoningContent goes with it;
-// clear it if the server rejects reasoning in input.
+// generated message; in a stream chunk it is the incremental delta. A
+// response message can be sent back as history as it is: AVELIN accepts its
+// ReasoningContent and the tool calls' Index.
 type ChatMessage struct {
 	// Role is "system", "user", "assistant" or "tool".
 	Role    string `json:"role"`
@@ -63,8 +64,8 @@ type ChatMessage struct {
 
 // ToolChoiceFunction forces a call to the named function when used as
 // ChatCompletionRequest.ToolChoice. AVELIN reports such a call with
-// FinishReason "stop", not "tool_calls". Clear ToolChoice before sending the
-// tool result, or the model is forced to call the function again.
+// FinishReason "stop", not "tool_calls". Set ToolChoice back to nil before
+// sending the tool result, or the model is forced to call the function again.
 type ToolChoiceFunction struct {
 	Name string
 }
@@ -98,8 +99,8 @@ type FunctionDefinition struct {
 
 // ToolCall is a function call requested by the model.
 type ToolCall struct {
-	// Index identifies the call across stream chunks. It is nil outside
-	// streams; set it to nil before sending a streamed call back as history.
+	// Index is the call's position in the response; in streams it ties
+	// fragments of one call together. AVELIN sends it in plain responses too.
 	Index    *int         `json:"index,omitempty"`
 	ID       string       `json:"id,omitempty"`
 	Type     string       `json:"type,omitempty"`
@@ -190,10 +191,10 @@ type ChatChunkChoice struct {
 
 // Accumulate adds a stream chunk to c, so that after the last chunk c holds
 // the whole completion. Content, reasoning and tool call arguments are
-// concatenated per choice, and tool calls get a nil Index, so a message can
-// be sent back as history as it is. Usage is copied from the final chunk
-// when StreamOptions.IncludeUsage was set. It returns an error if a chunk
-// refers to a choice or tool call more than one past the last one started.
+// concatenated per choice, and the merged tool calls have a nil Index. Usage
+// is copied from the final chunk when StreamOptions.IncludeUsage was set. It
+// returns an error if a chunk refers to a choice or tool call more than one
+// past the last one started.
 func (c *ChatCompletion) Accumulate(chunk ChatCompletionChunk) error {
 	if chunk.ID != "" {
 		c.ID = chunk.ID
@@ -273,6 +274,9 @@ const chatPath = "/v1/chat/completions"
 // CreateChatCompletion creates a chat completion.
 func (c *Client) CreateChatCompletion(ctx context.Context, req ChatCompletionRequest) (*ChatCompletion, error) {
 	req.StreamOptions = nil
+	if req.ToolChoice == "" {
+		req.ToolChoice = nil
+	}
 	var out ChatCompletion
 	var err error
 	out.Meta, out.Raw, err = c.do(ctx, request{method: http.MethodPost, path: chatPath, body: req}, &out)
@@ -285,6 +289,9 @@ func (c *Client) CreateChatCompletion(ctx context.Context, req ChatCompletionReq
 // CreateChatCompletionStream creates a chat completion streamed as
 // server-sent events. The caller must Close the stream.
 func (c *Client) CreateChatCompletionStream(ctx context.Context, req ChatCompletionRequest) (*Stream[ChatCompletionChunk], error) {
+	if req.ToolChoice == "" {
+		req.ToolChoice = nil
+	}
 	body := struct {
 		ChatCompletionRequest
 		Stream bool `json:"stream"`

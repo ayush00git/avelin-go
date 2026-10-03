@@ -2,7 +2,7 @@
   "id": "msg_def456",
   "type": "message",
   "role": "assistant",
-  "model": "avelin-agentic-pro",
+  "model": "avelin-fast",
   "content": [
     {"type": "text", "text": "It's 31°C and sunny in Abu Dhabi."}
   ],

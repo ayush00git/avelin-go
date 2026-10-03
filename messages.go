@@ -169,8 +169,8 @@ func (m *Message) Text() string {
 // the whole message, as CreateMessage would return it. Text, thinking and
 // signatures are concatenated per block, a tool_use block's Input is
 // assembled from its input_json_delta fragments (valid JSON once the block's
-// content_block_stop has arrived), and usage counts from message_delta
-// replace the estimates in message_start. It returns an error for a delta or
+// content_block_stop has arrived), and non-zero usage counts in message_delta
+// replace the estimates from message_start. It returns an error for a delta or
 // stop event whose block has not started.
 func (m *Message) Accumulate(ev MessageStreamEvent) error {
 	switch ev.Type {
@@ -288,14 +288,15 @@ type MessageStreamDelta struct {
 	StopReason  string `json:"stop_reason"`
 }
 
-// errMaxTokens is returned before sending: without a positive max_tokens the
-// API answers 400, or 500 when the field is missing.
-var errMaxTokens = errors.New("avelin: MessageRequest.MaxTokens must be positive")
+// ErrMaxTokens is returned, without sending a request, when
+// MessageRequest.MaxTokens is not positive. The API would answer 400, or 500
+// when the field is missing.
+var ErrMaxTokens = errors.New("avelin: MessageRequest.MaxTokens must be positive")
 
 // CreateMessage creates a message.
 func (c *Client) CreateMessage(ctx context.Context, req MessageRequest) (*Message, error) {
 	if req.MaxTokens <= 0 {
-		return nil, errMaxTokens
+		return nil, ErrMaxTokens
 	}
 	var out Message
 	var err error
@@ -310,7 +311,7 @@ func (c *Client) CreateMessage(ctx context.Context, req MessageRequest) (*Messag
 // caller must Close the stream.
 func (c *Client) CreateMessageStream(ctx context.Context, req MessageRequest) (*Stream[MessageStreamEvent], error) {
 	if req.MaxTokens <= 0 {
-		return nil, errMaxTokens
+		return nil, ErrMaxTokens
 	}
 	resp, err := c.send(ctx, messagesRequest(req, true))
 	if err != nil {

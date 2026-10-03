@@ -276,7 +276,7 @@ func TestIntegrationToolChoice(t *testing.T) {
 	}
 }
 
-// TestIntegrationListedModels calls every model the key lists, with one
+// TestIntegrationListedModels calls every chat model the key lists, with one
 // output token, and logs whether the canonical coding names also work.
 func TestIntegrationListedModels(t *testing.T) {
 	c, ctx := integrationClient(t)
@@ -290,7 +290,24 @@ func TestIntegrationListedModels(t *testing.T) {
 		})
 		return err
 	}
+	// Only chat models: the public catalog's IDs plus the legacy names. A
+	// key may also list models such as bge-m3 that chat cannot use.
+	catalog, err := c.FetchCatalog(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	chat := map[string]bool{}
+	for _, m := range catalog.Data {
+		chat[m.ID] = true
+	}
+	for _, id := range []avelin.ModelID{avelin.ModelCoding, avelin.ModelCodingPlus, avelin.ModelCodingArchitect, avelin.ModelAgentic, avelin.ModelAgenticHigh} {
+		chat[string(id)] = true
+	}
 	for _, m := range list.Data {
+		if !chat[m.ID] {
+			t.Logf("skipping %s: not a chat model", m.ID)
+			continue
+		}
 		if err := try(avelin.ModelID(m.ID)); err != nil {
 			t.Errorf("listed model %s: %v", m.ID, err)
 		}
