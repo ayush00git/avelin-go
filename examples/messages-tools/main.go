@@ -32,11 +32,8 @@ func main() {
 		if err != nil {
 			log.Fatal(err)
 		}
-		if msg.StopReason != "tool_use" {
-			fmt.Println(msg.Text())
-			return
-		}
-		req.Messages = append(req.Messages, avelin.MessageParam{Role: "assistant", Blocks: msg.Content})
+		// Look for tool_use blocks rather than StopReason: AVELIN reports a
+		// forced tool call as "end_turn".
 		var results []avelin.ContentBlock
 		for _, block := range msg.Content {
 			if block.Type != "tool_use" {
@@ -49,6 +46,12 @@ func main() {
 			fmt.Printf("model called %s(%s)\n", block.Name, block.Input)
 			results = append(results, avelin.ContentBlock{Type: "tool_result", ToolUseID: block.ID, Content: getWeather(args.City)})
 		}
-		req.Messages = append(req.Messages, avelin.MessageParam{Role: "user", Blocks: results})
+		if len(results) == 0 {
+			fmt.Println(msg.Text())
+			return
+		}
+		req.Messages = append(req.Messages,
+			avelin.MessageParam{Role: "assistant", Blocks: msg.Content},
+			avelin.MessageParam{Role: "user", Blocks: results})
 	}
 }

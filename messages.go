@@ -28,6 +28,8 @@ type MessageRequest struct {
 	// &Thinking{Type: "disabled"} to drop the block.
 	Thinking *Thinking     `json:"thinking,omitempty"`
 	Tools    []MessageTool `json:"tools,omitempty"`
+	// ToolChoice controls tool use; nil leaves it to the model.
+	ToolChoice *MessageToolChoice `json:"tool_choice,omitempty"`
 	// Temperature and TopP are optional. Use Ptr to set them.
 	Temperature   *float64 `json:"temperature,omitempty"`
 	TopP          *float64 `json:"top_p,omitempty"`
@@ -112,6 +114,18 @@ type ContentBlock struct {
 	IsError bool `json:"is_error,omitempty"`
 }
 
+// MessageToolChoice controls tool use on the messages endpoint. AVELIN's
+// docs do not list it; the live API accepts it. Clear a forcing choice
+// ("any" or "tool") before sending the tool result, or the model is forced
+// to call a tool again.
+type MessageToolChoice struct {
+	// Type is "auto", "any" (call at least one tool), "tool" (call Name) or
+	// "none".
+	Type string `json:"type"`
+	// Name is the tool to call when Type is "tool".
+	Name string `json:"name,omitempty"`
+}
+
 // MessageTool is a tool definition. InputSchema is a JSON Schema object, as
 // any value that marshals to one.
 type MessageTool struct {
@@ -129,7 +143,9 @@ type Message struct {
 	// Content holds the blocks in order. With thinking on, a "thinking"
 	// block comes before the "text" block, so use Text for the answer.
 	Content []ContentBlock `json:"content"`
-	// StopReason is, for example, "end_turn" or "tool_use".
+	// StopReason is, for example, "end_turn" or "tool_use". A forced tool
+	// call reports "end_turn", so look for "tool_use" blocks rather than
+	// relying on this field.
 	StopReason string       `json:"stop_reason"`
 	Usage      MessageUsage `json:"usage"`
 	// Meta is the HTTP status and headers of the response.
