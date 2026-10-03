@@ -417,3 +417,22 @@ func TestAttemptBodyCloseReleasesAttempt(t *testing.T) {
 		t.Error("attempt context not cancelled after Close")
 	}
 }
+
+func TestRequestIDHeaders(t *testing.T) {
+	both := http.Header{}
+	both.Set("X-Request-Id", "generic")
+	both.Set("X-Avelin-Request-Id", "avelin")
+	for _, tt := range []struct {
+		header http.Header
+		want   string
+	}{
+		{both, "avelin"},
+		{http.Header{"X-Request-Id": {"generic"}}, "generic"},
+		{http.Header{"Request-Id": {"plain"}}, "plain"},
+		{http.Header{}, ""},
+	} {
+		if got := (Meta{Header: tt.header}).RequestID(); got != tt.want {
+			t.Errorf("RequestID(%v) = %q, want %q", tt.header, got, tt.want)
+		}
+	}
+}

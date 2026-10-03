@@ -3,6 +3,7 @@ package avelin
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -16,12 +17,15 @@ const (
 // MessageRequest is the body of POST /v1/messages (Anthropic-compatible).
 type MessageRequest struct {
 	Model ModelID `json:"model"`
-	// MaxTokens is required by the API.
+	// MaxTokens is required and must be positive; CreateMessage and
+	// CreateMessageStream return an error before sending otherwise.
 	MaxTokens int            `json:"max_tokens"`
 	Messages  []MessageParam `json:"messages"`
 	System    string         `json:"system,omitempty"`
-	// Thinking controls extended thinking, which is on by default on models
-	// that support it. Set it to &Thinking{Type: "disabled"} to turn it off.
+	// Thinking controls extended thinking. AVELIN documents it as on by
+	// default, but live responses carry an empty thinking block unless it is
+	// set to &Thinking{Type: "enabled", BudgetTokens: n}. Use
+	// &Thinking{Type: "disabled"} to drop the block.
 	Thinking *Thinking     `json:"thinking,omitempty"`
 	Tools    []MessageTool `json:"tools,omitempty"`
 	// Temperature and TopP are optional. Use Ptr to set them.
@@ -33,10 +37,11 @@ type MessageRequest struct {
 
 // Thinking configures extended thinking.
 type Thinking struct {
-	// Type is "disabled", the only value AVELIN documents, or "enabled".
+	// Type is "enabled" or "disabled". AVELIN documents only "disabled".
 	Type string `json:"type"`
-	// BudgetTokens is the Anthropic thinking budget for Type "enabled".
-	// AVELIN's API reference does not document it.
+	// BudgetTokens caps thinking tokens for Type "enabled". It comes from the
+	// Anthropic format and works on the live API, though AVELIN's reference
+	// does not document it.
 	BudgetTokens int `json:"budget_tokens,omitempty"`
 }
 
@@ -146,9 +151,10 @@ func (m *Message) Text() string {
 
 // Accumulate adds a stream event to m, so that after message_stop m holds
 // the whole message, as CreateMessage would return it. Text, thinking and
-// signatures are concatenated per block, and a tool_use block's Input is
-// assembled from its input_json_delta fragments; it is valid JSON once the
-// block's content_block_stop has arrived. It returns an error for a delta or
+// signatures are concatenated per block, a tool_use block's Input is
+// assembled from its input_json_delta fragments (valid JSON once the block's
+// content_block_stop has arrived), and usage counts from message_delta
+// replace the estimates in message_start. It returns an error for a delta or
 // stop event whose block has not started.
 func (m *Message) Accumulate(ev MessageStreamEvent) error {
 	switch ev.Type {
@@ -191,9 +197,11 @@ func (m *Message) Accumulate(ev MessageStreamEvent) error {
 			m.StopReason = ev.Delta.StopReason
 		}
 		if u := ev.Usage; u != nil {
-			m.Usage.InputTokens = max(m.Usage.InputTokens, u.InputTokens)
-			m.Usage.OutputTokens = max(m.Usage.OutputTokens, u.OutputTokens)
-			m.Usage.TotalTokens = max(m.Usage.TotalTokens, u.TotalTokens)
+			setIfSent(&m.Usage.InputTokens, u.InputTokens)
+			setIfSent(&m.Usage.OutputTokens, u.OutputTokens)
+			setIfSent(&m.Usage.TotalTokens, u.TotalTokens)
+			setIfSent(&m.Usage.CacheCreationInputTokens, u.CacheCreationInputTokens)
+			setIfSent(&m.Usage.CacheReadInputTokens, u.CacheReadInputTokens)
 		}
 	}
 	return nil
@@ -206,17 +214,27 @@ func (m *Message) startedBlock(ev MessageStreamEvent) (*ContentBlock, error) {
 	return &m.Content[ev.Index], nil
 }
 
+// setIfSent replaces an earlier count; a zero means the field was not sent.
+func setIfSent(dst *int, v int) {
+	if v != 0 {
+		*dst = v
+	}
+}
+
 func isEmptyObject(raw json.RawMessage) bool {
 	var obj map[string]json.RawMessage
 	return json.Unmarshal(raw, &obj) == nil && obj != nil && len(obj) == 0
 }
 
-// MessageUsage reports token counts. TotalTokens is an AVELIN addition to
-// the Anthropic format.
+// MessageUsage reports token counts.
 type MessageUsage struct {
 	InputTokens  int `json:"input_tokens"`
 	OutputTokens int `json:"output_tokens"`
-	TotalTokens  int `json:"total_tokens"`
+	// TotalTokens is in AVELIN's docs but missing from live responses, so it
+	// is usually zero; add InputTokens and OutputTokens instead.
+	TotalTokens              int `json:"total_tokens"`
+	CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
+	CacheReadInputTokens     int `json:"cache_read_input_tokens"`
 }
 
 // MessageStreamEvent is one event of a messages stream. Type selects the
@@ -254,8 +272,15 @@ type MessageStreamDelta struct {
 	StopReason  string `json:"stop_reason"`
 }
 
+// errMaxTokens is returned before sending: without a positive max_tokens the
+// API answers 400, or 500 when the field is missing.
+var errMaxTokens = errors.New("avelin: MessageRequest.MaxTokens must be positive")
+
 // CreateMessage creates a message.
 func (c *Client) CreateMessage(ctx context.Context, req MessageRequest) (*Message, error) {
+	if req.MaxTokens <= 0 {
+		return nil, errMaxTokens
+	}
 	var out Message
 	var err error
 	out.Meta, out.Raw, err = c.do(ctx, messagesRequest(req, false), &out)
@@ -268,6 +293,9 @@ func (c *Client) CreateMessage(ctx context.Context, req MessageRequest) (*Messag
 // CreateMessageStream creates a message streamed as server-sent events. The
 // caller must Close the stream.
 func (c *Client) CreateMessageStream(ctx context.Context, req MessageRequest) (*Stream[MessageStreamEvent], error) {
+	if req.MaxTokens <= 0 {
+		return nil, errMaxTokens
+	}
 	resp, err := c.send(ctx, messagesRequest(req, true))
 	if err != nil {
 		return nil, err

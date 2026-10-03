@@ -512,3 +512,58 @@ func TestChatToolRoundTripWithMock(t *testing.T) {
 		{"role":"tool","content":"{\"temp_c\": 31}","tool_call_id":"call_abc123"}],
 		"tools":[{"type":"function","function":{"name":"get_weather"}}]}`)
 }
+
+// TestLiveChatCompletion decodes a response captured from the live API on
+// 2026-10-03, including the usage fields AVELIN does not document.
+func TestLiveChatCompletion(t *testing.T) {
+	srv := httptest.NewServer(status(200, string(fixture(t, "live_chat_completion.json")), "X-Avelin-Request-Id", "8c54253d-a956-45d8-b4fa-cf46d80eee32"))
+	defer srv.Close()
+	resp, err := newTestClient(srv).CreateChatCompletion(context.Background(), ChatCompletionRequest{Model: ModelFast, Messages: userMessage("Say hi in two words.")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := Usage{PromptTokens: 142, CompletionTokens: 2, TotalTokens: 144,
+		CompletionTokensDetails: CompletionTokensDetails{TextTokens: 2}, PromptTokensDetails: PromptTokensDetails{TextTokens: 142}}
+	if resp.Usage != want || resp.Choices[0].Message.Content != "Hello there" {
+		t.Errorf("usage = %+v, content = %q", resp.Usage, resp.Choices[0].Message.Content)
+	}
+	if resp.Meta.RequestID() != "8c54253d-a956-45d8-b4fa-cf46d80eee32" {
+		t.Errorf("request id = %q", resp.Meta.RequestID())
+	}
+}
+
+func TestChatStreamIncludeUsage(t *testing.T) {
+	rec := &recorder{}
+	srv := httptest.NewServer(rec.wrap(sse(string(fixture(t, "live_chat_stream_usage.txt")))))
+	defer srv.Close()
+	req := ChatCompletionRequest{Model: ModelFast, Messages: userMessage("Say hi in two words."), StreamOptions: &StreamOptions{IncludeUsage: true}}
+	stream, err := newTestClient(srv).CreateChatCompletionStream(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stream.Close()
+	var completion ChatCompletion
+	for stream.Next() {
+		if err := completion.Accumulate(stream.Current()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if stream.Err() != nil || completion.Choices[0].Message.Content != "Hello there" || completion.Usage.TotalTokens != 144 || completion.Usage.PromptTokens != 142 {
+		t.Fatalf("err=%v content=%q usage=%+v", stream.Err(), completion.Choices[0].Message.Content, completion.Usage)
+	}
+	_, body := rec.last()
+	assertJSON(t, body, `{"model":"avelin-fast","messages":[{"role":"user","content":"Say hi in two words."}],"stream_options":{"include_usage":true},"stream":true}`)
+}
+
+func TestChatCompletionDropsStreamOptions(t *testing.T) {
+	srv, rec := mockServer(t)
+	req := ChatCompletionRequest{Model: ModelFast, Messages: userMessage("hi"), StreamOptions: &StreamOptions{IncludeUsage: true}}
+	if _, err := newTestClient(srv).CreateChatCompletion(context.Background(), req); err != nil {
+		t.Fatal(err)
+	}
+	_, body := rec.last()
+	assertJSON(t, body, `{"model":"avelin-fast","messages":[{"role":"user","content":"hi"}]}`)
+	if req.StreamOptions == nil {
+		t.Error("CreateChatCompletion changed the caller's request")
+	}
+}

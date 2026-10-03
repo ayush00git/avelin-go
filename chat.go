@@ -27,9 +27,20 @@ type ChatCompletionRequest struct {
 	Tools            []Tool   `json:"tools,omitempty"`
 	// ToolChoice is "auto" or "none".
 	ToolChoice string `json:"tool_choice,omitempty"`
-	// ReasoningEffort is "high" to request deeper reasoning on models that
-	// support it. AVELIN documents no other value.
+	// ReasoningEffort is "low", "medium" or "high" on models that reason.
+	// AVELIN documents only "high", but all three are accepted. Reasoning
+	// tokens count toward MaxTokens.
 	ReasoningEffort string `json:"reasoning_effort,omitempty"`
+	// StreamOptions applies to CreateChatCompletionStream only;
+	// CreateChatCompletion leaves it out of the request.
+	StreamOptions *StreamOptions `json:"stream_options,omitempty"`
+}
+
+// StreamOptions configures a chat completion stream.
+type StreamOptions struct {
+	// IncludeUsage asks for a final chunk that carries Usage. It is not in
+	// AVELIN's docs but works on the live API.
+	IncludeUsage bool `json:"include_usage"`
 }
 
 // ChatMessage is one message of a conversation. In a response it is the
@@ -103,11 +114,33 @@ type ChatChoice struct {
 	FinishReason string `json:"finish_reason"`
 }
 
-// Usage reports token counts.
+// Usage reports token counts. Only the first three fields are documented by
+// AVELIN; the rest appear in live chat responses and are zero for
+// embeddings.
 type Usage struct {
 	PromptTokens     int `json:"prompt_tokens"`
 	CompletionTokens int `json:"completion_tokens"`
 	TotalTokens      int `json:"total_tokens"`
+	// CompletionTokensDetails splits CompletionTokens into reasoning and
+	// text.
+	CompletionTokensDetails CompletionTokensDetails `json:"completion_tokens_details"`
+	// PromptTokensDetails reports how many prompt tokens came from the
+	// prompt cache.
+	PromptTokensDetails      PromptTokensDetails `json:"prompt_tokens_details"`
+	CacheCreationInputTokens int                 `json:"cache_creation_input_tokens"`
+	CacheReadInputTokens     int                 `json:"cache_read_input_tokens"`
+}
+
+// CompletionTokensDetails splits completion tokens by kind.
+type CompletionTokensDetails struct {
+	ReasoningTokens int `json:"reasoning_tokens"`
+	TextTokens      int `json:"text_tokens"`
+}
+
+// PromptTokensDetails splits prompt tokens by kind.
+type PromptTokensDetails struct {
+	CachedTokens int `json:"cached_tokens"`
+	TextTokens   int `json:"text_tokens"`
 }
 
 // ChatCompletionChunk is one event of a chat completion stream.
@@ -117,6 +150,9 @@ type ChatCompletionChunk struct {
 	Created int64             `json:"created"`
 	Model   string            `json:"model"`
 	Choices []ChatChunkChoice `json:"choices"`
+	// Usage is set on the final chunk when StreamOptions.IncludeUsage is
+	// true.
+	Usage *Usage `json:"usage,omitempty"`
 	// Raw is the event's JSON data, for fields this package does not model.
 	Raw json.RawMessage `json:"-"`
 }
@@ -132,9 +168,9 @@ type ChatChunkChoice struct {
 // Accumulate adds a stream chunk to c, so that after the last chunk c holds
 // the whole completion. Content, reasoning and tool call arguments are
 // concatenated per choice, and tool calls get a nil Index, so a message can
-// be sent back as history as it is. Usage stays zero: AVELIN does not
-// document usage in streams. It returns an error if a chunk refers to a
-// choice or tool call more than one past the last one started.
+// be sent back as history as it is. Usage is copied from the final chunk
+// when StreamOptions.IncludeUsage was set. It returns an error if a chunk
+// refers to a choice or tool call more than one past the last one started.
 func (c *ChatCompletion) Accumulate(chunk ChatCompletionChunk) error {
 	if chunk.ID != "" {
 		c.ID = chunk.ID
@@ -145,6 +181,9 @@ func (c *ChatCompletion) Accumulate(chunk ChatCompletionChunk) error {
 	}
 	if chunk.Model != "" {
 		c.Model = chunk.Model
+	}
+	if chunk.Usage != nil {
+		c.Usage = *chunk.Usage
 	}
 	for _, delta := range chunk.Choices {
 		if delta.Index < 0 || delta.Index > len(c.Choices) {
@@ -210,6 +249,7 @@ const chatPath = "/v1/chat/completions"
 
 // CreateChatCompletion creates a chat completion.
 func (c *Client) CreateChatCompletion(ctx context.Context, req ChatCompletionRequest) (*ChatCompletion, error) {
+	req.StreamOptions = nil
 	var out ChatCompletion
 	var err error
 	out.Meta, out.Raw, err = c.do(ctx, request{method: http.MethodPost, path: chatPath, body: req}, &out)

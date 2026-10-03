@@ -21,9 +21,10 @@ type APIError struct {
 	Code string
 	// Message is error.message, or a fallback built from the body or status.
 	Message string
-	// RequestID comes from the X-Request-Id or Request-Id header, if present.
+	// RequestID comes from the X-Avelin-Request-Id header (see
+	// Meta.RequestID). AVELIN omits it on some errors, such as 401 and 403.
 	RequestID string
-	// Header holds the response headers, including any X-RateLimit-* headers.
+	// Header holds the response headers.
 	Header http.Header
 	// Body is the raw response body (at most 1 MiB), or the stream event data.
 	Body []byte

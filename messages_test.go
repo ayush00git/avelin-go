@@ -124,13 +124,35 @@ func TestMessageParamRoundTrip(t *testing.T) {
 }
 
 func TestCreateMessageAPIError(t *testing.T) {
-	srv, _ := mockServer(t)
+	srv := httptest.NewServer(status(400, `{"error": {"message": "Bad request. Please try again."}}`, "X-Avelin-Request-Id", "req_1"))
+	defer srv.Close()
 	_, err := newTestClient(srv).CreateMessage(context.Background(), MessageRequest{
-		Model: "avelin-pro", Messages: []MessageParam{{Role: "user", Content: "hi"}},
+		Model: "avelin-pro", MaxTokens: 10, Messages: []MessageParam{{Role: "user", Content: "hi"}},
 	})
 	var apiErr *APIError
-	if !errors.As(err, &apiErr) || apiErr.StatusCode != 400 || apiErr.Type != "invalid_request_error" {
-		t.Fatalf("err = %v, want 400 for missing max_tokens", err)
+	if !errors.As(err, &apiErr) || apiErr.StatusCode != 400 || apiErr.Message != "Bad request. Please try again." || apiErr.RequestID != "req_1" {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+// TestCreateMessageRequiresMaxTokens checks the request is refused before
+// sending: the live API answers 400 for max_tokens 0 and 500 when it is
+// missing.
+func TestCreateMessageRequiresMaxTokens(t *testing.T) {
+	var calls atomic.Int32
+	srv := httptest.NewServer(sequence(&calls, status(200, string(fixture(t, "message.json")))))
+	defer srv.Close()
+	c := newTestClient(srv)
+	req := MessageRequest{Model: "avelin-pro", Messages: []MessageParam{{Role: "user", Content: "hi"}}}
+	if _, err := c.CreateMessage(context.Background(), req); err == nil || !strings.Contains(err.Error(), "MaxTokens") {
+		t.Errorf("CreateMessage err = %v", err)
+	}
+	req.MaxTokens = -1
+	if _, err := c.CreateMessageStream(context.Background(), req); err == nil || !strings.Contains(err.Error(), "MaxTokens") {
+		t.Errorf("CreateMessageStream err = %v", err)
+	}
+	if calls.Load() != 0 {
+		t.Fatalf("server was called %d times", calls.Load())
 	}
 }
 
@@ -479,4 +501,56 @@ func TestMessageToolRoundTripWithMock(t *testing.T) {
 		{"role":"assistant","content":[{"type":"tool_use","id":"toolu_abc123","name":"get_weather","input":{"city":"Abu Dhabi"}}]},
 		{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_abc123","content":"{\"temp_c\": 31}"}]}],
 		"tools":[{"name":"get_weather","input_schema":{"type":"object"}}]}`)
+}
+
+// TestLiveMessageResponses decodes responses captured from the live API on
+// 2026-10-03: an empty thinking block, no total_tokens, a stream that starts
+// with ping and mixes "data:" and "data: ".
+func TestLiveMessageResponses(t *testing.T) {
+	srv := httptest.NewServer(status(200, string(fixture(t, "live_message.json"))))
+	defer srv.Close()
+	msg, err := newTestClient(srv).CreateMessage(context.Background(), MessageRequest{Model: ModelPro, MaxTokens: 300, Messages: []MessageParam{{Role: "user", Content: "Is 91 prime?"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(msg.Content[0], ContentBlock{Type: "thinking"}) || msg.Text() != "No, 91 is not prime because it equals 7 × 13." {
+		t.Errorf("content = %+v", msg.Content)
+	}
+	if msg.Usage != (MessageUsage{InputTokens: 137, OutputTokens: 16}) || msg.StopReason != "end_turn" {
+		t.Errorf("usage = %+v, stop = %q", msg.Usage, msg.StopReason)
+	}
+
+	streamSrv := httptest.NewServer(sse(string(fixture(t, "live_messages_stream.txt"))))
+	defer streamSrv.Close()
+	stream, err := newTestClient(streamSrv).CreateMessageStream(context.Background(), MessageRequest{Model: ModelPro, MaxTokens: 300, Messages: []MessageParam{{Role: "user", Content: "Is 91 prime?"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stream.Close()
+	var streamed Message
+	var first string
+	for stream.Next() {
+		if first == "" {
+			first = stream.Current().Type
+		}
+		if err := streamed.Accumulate(stream.Current()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if stream.Err() != nil || first != "ping" || streamed.Text() != "No, 91 is not prime because it equals 7 times 13." || streamed.StopReason != "end_turn" {
+		t.Fatalf("err=%v first=%q text=%q stop=%q", stream.Err(), first, streamed.Text(), streamed.StopReason)
+	}
+	if streamed.Usage != (MessageUsage{InputTokens: 137, OutputTokens: 16}) || !strings.HasPrefix(streamed.ID, "msg_") {
+		t.Fatalf("usage = %+v, id = %q", streamed.Usage, streamed.ID)
+	}
+}
+
+func TestMessageAccumulateCacheUsage(t *testing.T) {
+	msg, err := accumulateEvents(t,
+		`{"type":"message_start","message":{"id":"msg_1","usage":{"input_tokens":10,"output_tokens":1}}}`,
+		`{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"input_tokens":10,"output_tokens":5,"cache_creation_input_tokens":7,"cache_read_input_tokens":3}}`)
+	want := MessageUsage{InputTokens: 10, OutputTokens: 5, CacheCreationInputTokens: 7, CacheReadInputTokens: 3}
+	if err != nil || msg.Usage != want {
+		t.Fatalf("usage = %+v, err = %v", msg.Usage, err)
+	}
 }
