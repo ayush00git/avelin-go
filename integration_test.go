@@ -55,16 +55,19 @@ func TestIntegrationChat(t *testing.T) {
 	if resp.ID == "" || len(resp.Choices) == 0 {
 		t.Fatalf("unexpected response: %s", resp.Raw)
 	}
-	t.Logf("content=%q finish=%s usage=%+v", resp.Choices[0].Message.Content, resp.Choices[0].FinishReason, resp.Usage)
-	t.Logf("headers: %v", resp.Meta.Header)
+	if resp.Meta.RequestID() == "" {
+		t.Errorf("no request ID; headers: %v", resp.Meta.Header)
+	}
+	t.Logf("content=%q finish=%s usage=%+v request id=%s", resp.Choices[0].Message.Content, resp.Choices[0].FinishReason, resp.Usage, resp.Meta.RequestID())
 }
 
 func TestIntegrationChatStream(t *testing.T) {
 	c, ctx := integrationClient(t)
 	stream, err := c.CreateChatCompletionStream(ctx, avelin.ChatCompletionRequest{
-		Model:     avelin.ModelFast,
-		Messages:  []avelin.ChatMessage{{Role: "user", Content: "Count from 1 to 5."}},
-		MaxTokens: 256,
+		Model:         avelin.ModelFast,
+		Messages:      []avelin.ChatMessage{{Role: "user", Content: "Count from 1 to 5."}},
+		MaxTokens:     256,
+		StreamOptions: &avelin.StreamOptions{IncludeUsage: true},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -81,10 +84,10 @@ func TestIntegrationChatStream(t *testing.T) {
 	if err := stream.Err(); err != nil {
 		t.Fatal(err)
 	}
-	if chunks == 0 || len(completion.Choices) == 0 || completion.Choices[0].FinishReason == "" {
+	if chunks == 0 || len(completion.Choices) == 0 || completion.Choices[0].FinishReason == "" || completion.Usage.TotalTokens == 0 {
 		t.Fatalf("incomplete stream: %d chunks, accumulated %+v", chunks, completion)
 	}
-	t.Logf("%d chunks, content=%q finish=%s", chunks, completion.Choices[0].Message.Content, completion.Choices[0].FinishReason)
+	t.Logf("%d chunks, content=%q finish=%s usage=%+v", chunks, completion.Choices[0].Message.Content, completion.Choices[0].FinishReason, completion.Usage)
 }
 
 func TestIntegrationMessages(t *testing.T) {
@@ -126,7 +129,7 @@ func TestIntegrationMessagesStream(t *testing.T) {
 	if err := stream.Err(); err != nil {
 		t.Fatal(err)
 	}
-	if last != "message_stop" || len(msg.Content) == 0 || msg.StopReason == "" {
+	if last != "message_stop" || len(msg.Content) == 0 || msg.StopReason == "" || msg.Usage.OutputTokens == 0 {
 		t.Fatalf("last event %q, accumulated %+v", last, msg)
 	}
 	t.Logf("text=%q stop=%s usage=%+v", msg.Text(), msg.StopReason, msg.Usage)

@@ -30,5 +30,5 @@ func main() {
 		}
 	}
 	fmt.Println(msg.Text())
-	fmt.Printf("(%s, stop: %s, %d tokens)\n", msg.Model, msg.StopReason, msg.Usage.TotalTokens)
+	fmt.Printf("(%s, stop: %s, %d tokens)\n", msg.Model, msg.StopReason, msg.Usage.InputTokens+msg.Usage.OutputTokens)
 }

@@ -125,26 +125,27 @@ func NewClient(opts ...Option) *Client {
 	return c
 }
 
-// Meta is the HTTP metadata of the response that produced a result. AVELIN
-// documents X-RateLimit-* headers; any other headers it sends, such as
-// routing details, are visible here too.
+// Meta is the HTTP metadata of the response that produced a result, such as
+// the X-Avelin-Request-Id header AVELIN sends on most responses.
 type Meta struct {
 	StatusCode int
 	Header     http.Header
 }
 
-// RequestID returns the request ID header if the response had one. AVELIN
-// does not document a header name, so this checks X-Request-Id, then
-// Request-Id.
+// RequestID returns the response's request ID, or "" if it has none. AVELIN
+// sends X-Avelin-Request-Id (undocumented; missing on some errors and on
+// /v1/models); X-Request-Id and Request-Id are checked as fallbacks.
 func (m Meta) RequestID() string {
 	return requestID(m.Header)
 }
 
 func requestID(h http.Header) string {
-	if id := h.Get("X-Request-Id"); id != "" {
-		return id
+	for _, name := range []string{"X-Avelin-Request-Id", "X-Request-Id", "Request-Id"} {
+		if id := h.Get(name); id != "" {
+			return id
+		}
 	}
-	return h.Get("Request-Id")
+	return ""
 }
 
 type request struct {

@@ -80,18 +80,19 @@ fmt.Println(msg.StopReason, msg.Usage.OutputTokens)
 ```
 
 `Message.Accumulate` and `ChatCompletion.Accumulate` build the full result from a stream, tool
-calls included, so it can be read or sent back as history. A stream that ends before `[DONE]` or
+calls included, so it can be read or sent back as history. For token usage on a chat stream, set
+`StreamOptions: &avelin.StreamOptions{IncludeUsage: true}`. A stream that ends before `[DONE]` or
 `message_stop` returns an error wrapping `io.ErrUnexpectedEOF`.
 
 ## Errors and metadata
 
 Non-2xx responses, and errors reported inside a stream, return `*avelin.APIError` (use
-`errors.As`) with `StatusCode`, `Type`, `Code`, `Message`, `RequestID`, `Body` and `Header`, which
-includes AVELIN's `X-RateLimit-*` headers.
+`errors.As`) with `StatusCode`, `Type`, `Code`, `Message`, `RequestID`, `Body` and `Header`. AVELIN's
+live errors carry only a message, so `Type` and `Code` are usually empty.
 
 Every value a method returns carries `Meta` (HTTP status and headers) and `Raw` (the full JSON
 body), so headers and fields this package does not model are still reachable. Streams expose
-`Meta()`, and each event has `Raw`.
+`Meta()`, each event has `Raw`, and `Meta.RequestID()` returns AVELIN's `X-Avelin-Request-Id`.
 
 ## Model IDs
 
@@ -113,10 +114,10 @@ refresh it with `go generate ./...`. `ModelBGEM3` is the embeddings model. Legac
 
 ## Status
 
-Built from AVELIN's published docs and tested against mock servers only; it has not been run
-against the authenticated API. Assumed rather than documented: the request ID header
-(`X-Request-Id`, then `Request-Id`), how errors appear mid-stream (they end the stream with
-`*APIError`), and `thinking.budget_tokens` (from Anthropic's spec).
+Built from AVELIN's docs, then checked against the live API on 2026-10-03: chat and messages,
+streaming, tool calling and `Accumulate` on `avelin-fast` and `avelin-pro`. Not verified live:
+handling of 429 (the API never rate-limited), errors in the middle of a stream, and embeddings and
+the agentic models (not available on the test account).
 
 ## License
 
